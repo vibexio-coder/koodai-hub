@@ -1,15 +1,15 @@
 /* eslint-disable no-unused-vars */
 import React, { useState, useEffect } from 'react';
-import { 
-  Package, 
-  Plus, 
-  Search, 
-  Filter, 
-  Edit, 
-  Trash2, 
-  Eye, 
-  EyeOff, 
-  Check, 
+import {
+  Package,
+  Plus,
+  Search,
+  Filter,
+  Edit,
+  Trash2,
+  Eye,
+  EyeOff,
+  Check,
   X,
   AlertCircle,
   Grid,
@@ -39,20 +39,20 @@ import {
   ShoppingCart
 } from 'lucide-react';
 import { db, storage, auth } from '../../firebase/firebase.config';
-import { 
-  collection, 
-  addDoc, 
-  getDocs, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  query, 
-  where, 
-  orderBy, 
+import {
+  collection,
+  addDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  doc,
+  query,
+  where,
+  orderBy,
   serverTimestamp,
-  onSnapshot 
+  onSnapshot
 } from 'firebase/firestore';
-import { 
+import {
   signOut,
   onAuthStateChanged
 } from 'firebase/auth';
@@ -69,12 +69,13 @@ const VendorDashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  
+
   // Vendor information from hotels collection
   const [vendorInfo, setVendorInfo] = useState(null);
-  
+
   // Products state
   const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [stats, setStats] = useState({
     totalProducts: 0,
@@ -82,7 +83,7 @@ const VendorDashboard = () => {
     outOfStock: 0,
     totalSales: 0
   });
-  
+
   // Filters state
   const [filters, setFilters] = useState({
     search: '',
@@ -90,7 +91,7 @@ const VendorDashboard = () => {
     sortBy: 'name',
     viewMode: 'grid'
   });
-  
+
   // Category-specific filters
   const [categoryFilters, setCategoryFilters] = useState({
     // Food
@@ -98,44 +99,46 @@ const VendorDashboard = () => {
     spiceLevel: 'all',
     cuisine: 'all',
     bestseller: false,
-    
+
     // Medicine
     medicineType: 'all',
     prescriptionRequired: 'all',
-    
+
     // Grocery
     productType: 'all',
     organic: false,
-    
+
     // Fruits & Vegetables
     fruitType: 'all',
     organicFruits: false,
     seasonal: false,
-    
+
     // Meat & Fish
     meatType: 'all',
     cutType: 'all',
     freshFrozen: 'all',
-    
+
     // Dress & Gadgets
     gender: 'all',
     occasion: 'all',
     size: 'all'
   });
-  
+
   // Add/Edit Product Modal
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [newProduct, setNewProduct] = useState({
+    // Basic Fields
     name: '',
     description: '',
-    price: 0,
+    price: '',
     image: '',
-    imageFile: null,
+    image: '',
+    inStock: true,
     availability: true,
     quantity: 1,
     isVeg: true,
-    
+
     // Food specific
     spiceLevel: 'mild',
     cuisine: '',
@@ -144,9 +147,9 @@ const VendorDashboard = () => {
     preparationTime: '',
     packagingType: '',
     bestseller: false,
-    
+
     // Medicine specific
-    medicineType: '',
+    medicineType: 'tablet',
     expiryDate: '',
     batchNumber: '',
     prescriptionRequired: false,
@@ -155,17 +158,17 @@ const VendorDashboard = () => {
     manufacturer: '',
     storageConditions: '',
     sideEffects: '',
-    
+
     // Grocery specific
-    groceryType: '',
+    groceryType: 'staples',
     netWeight: '',
     weightUnit: 'g',
     manufacturerGrocery: '',
     storageInstructions: '',
     countryOfOrigin: '',
-    
+
     // Fruits & Vegetables specific
-    fruitVegetableType: '',
+    fruitVegetableType: 'fruits',
     weightFruits: '',
     weightUnitFruits: 'g',
     organicFruit: false,
@@ -173,37 +176,29 @@ const VendorDashboard = () => {
     cutOption: 'uncut',
     seasonalFruit: false,
     storageInstructionsFruits: '',
-    
+
     // Meat & Fish specific
-    meatFishType: '',
-    cutType: '',
+    meatFishType: 'chicken',
+    cutType: 'curry-cut',
     weightMeat: '',
     weightUnitMeat: 'g',
     freshFrozen: 'fresh',
     source: '',
     packagingTypeMeat: '',
-    deliverySlot: '',
+    deliverySlot: 'morning',
     storageInstructionsMeat: '',
-    
+
     // Dress & Gadgets specific
     gender: 'unisex',
     size: '',
     colorOptions: '',
     fabricMaterial: '',
-    fitType: '',
+    fitType: 'regular',
     occasionDress: '',
     washCareInstructions: '',
     countryOfManufacture: '',
-    
-    // Common meta
-    createdAt: null,
-    updatedAt: null,
-    vendorId: '',
-    businessId: '',
-    categoryId: '',
-    status: 'active'
   });
-  
+
   // Check for stored vendor session on mount
   useEffect(() => {
     const checkVendorSession = async () => {
@@ -213,7 +208,7 @@ const VendorDashboard = () => {
         if (!sessionData) {
           sessionData = localStorage.getItem('vendorSession');
         }
-        
+
         if (sessionData) {
           const parsedSession = JSON.parse(sessionData);
           await fetchVendorInfo(parsedSession.applicationId);
@@ -228,10 +223,10 @@ const VendorDashboard = () => {
         setLoading(false);
       }
     };
-    
+
     checkVendorSession();
   }, [navigate]);
-  
+
   // Fetch vendor info from hotels collection using applicationId
   const fetchVendorInfo = async (applicationId) => {
     try {
@@ -239,11 +234,11 @@ const VendorDashboard = () => {
       const hotelsRef = collection(db, 'hotels');
       const q = query(hotelsRef, where('applicationId', '==', applicationId.trim()));
       const querySnapshot = await getDocs(q);
-      
+
       if (!querySnapshot.empty) {
         const vendorDoc = querySnapshot.docs[0];
         const vendorData = vendorDoc.data();
-        
+
         // Check if vendor is approved
         if (vendorData.status !== 'approved') {
           toast.error('Your application is pending approval');
@@ -252,10 +247,10 @@ const VendorDashboard = () => {
           navigate('/');
           return;
         }
-        
+
         setVendorInfo({
           id: vendorDoc.id,
-          businessName: vendorData.hotelName,
+          businessName: vendorData.name || vendorData.hotelName,
           businessId: vendorDoc.id,
           categoryId: vendorData.categoryId,
           categoryName: vendorData.categoryName,
@@ -263,11 +258,15 @@ const VendorDashboard = () => {
           email: vendorData.email,
           phone: vendorData.phone,
           address: vendorData.address,
-          status: vendorData.status
+          status: vendorData.status,
+          open: vendorData.open || false,
+          openingTime: vendorData.openingTime || '',
+          closingTime: vendorData.closingTime || ''
         });
-        
+
         // Start listening to vendor's products
         setupProductsListener(vendorDoc.id, vendorData.applicationId);
+        setupOrdersListener(vendorDoc.id);
       } else {
         toast.error('Vendor information not found');
         sessionStorage.removeItem('vendorSession');
@@ -282,23 +281,28 @@ const VendorDashboard = () => {
       setLoading(false);
     }
   };
-  
+
   // Setup real-time listener for vendor's products
   const setupProductsListener = (vendorId, applicationId) => {
-    const productsRef = collection(db, 'menu');
+    const productsRef = collection(db, 'products');
     const q = query(
-      productsRef, 
-      where('vendorId', '==', vendorId),
-      where('applicationId', '==', applicationId),
-      orderBy('createdAt', 'desc')
+      productsRef,
+      where('hotelId', '==', vendorId)
     );
-    
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const productsData = [];
       snapshot.forEach((doc) => {
+        const data = doc.data();
         productsData.push({
           id: doc.id,
-          ...doc.data()
+          ...data,
+          name: data.productName || data.name,
+          description: data.productDescription || data.description,
+          quantity: data.stockQuantity || data.quantity || 1,
+          image: data.productImage || data.image,
+          inStock: data.inStock !== false, // Default to true if missing
+          availability: data.status === 'active' || data.availability === true,
         });
       });
       setProducts(productsData);
@@ -307,47 +311,86 @@ const VendorDashboard = () => {
       console.error('Error in products listener:', error);
       toast.error('Error loading products');
     });
-    
+
     return unsubscribe;
   };
-  
+
+  // Setup real-time listener for vendor's orders
+  const setupOrdersListener = (vendorId) => {
+    const ordersRef = collection(db, 'orders');
+    const q = query(
+      ordersRef,
+      where('vendorId', '==', vendorId)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const ordersData = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        ordersData.push({
+          id: doc.id,
+          ...data,
+          orderDate: data.createdAt?.toDate?.() || new Date(),
+          status: data.status || 'placed'
+        });
+      });
+
+      // Client-side sort to avoid composite index error
+      ordersData.sort((a, b) => b.orderDate - a.orderDate);
+
+      setOrders(ordersData);
+
+      // Calculate total sales from delivered orders
+      const totalSales = ordersData
+        .filter(o => o.status === 'delivered')
+        .reduce((sum, order) => sum + (parseFloat(order.totalAmount || order.amount) || 0), 0);
+
+      setStats(prev => ({ ...prev, totalSales }));
+
+    }, (error) => {
+      console.error('Error in orders listener:', error);
+    });
+
+    return unsubscribe;
+  };
+
   const updateStats = (productsList) => {
     const totalProducts = productsList.length;
     const activeProducts = productsList.filter(p => p.availability === true).length;
-    const outOfStock = productsList.filter(p => p.availability === false).length;
-    
-    setStats({
+    const outOfStock = productsList.filter(p => !p.inStock).length;
+
+    setStats(prev => ({
+      ...prev,
       totalProducts,
       activeProducts,
-      outOfStock,
-      totalSales: 0 // This would come from orders data
-    });
+      outOfStock
+    }));
   };
-  
+
   // Apply filters whenever products or filters change
   useEffect(() => {
     applyFilters();
   }, [products, filters, categoryFilters]);
-  
+
   const applyFilters = () => {
     let filtered = [...products];
-    
+
     // Search filter
     if (filters.search) {
       const searchTerm = filters.search.toLowerCase();
-      filtered = filtered.filter(product => 
+      filtered = filtered.filter(product =>
         product.name.toLowerCase().includes(searchTerm) ||
         product.description?.toLowerCase().includes(searchTerm)
       );
     }
-    
+
     // Availability filter
     if (filters.availability === 'active') {
-      filtered = filtered.filter(product => product.availability === true);
+      filtered = filtered.filter(product => product.inStock === true);
     } else if (filters.availability === 'outOfStock') {
-      filtered = filtered.filter(product => product.availability === false);
+      filtered = filtered.filter(product => product.inStock === false);
     }
-    
+
     // Category-specific filters based on vendor's category
     if (vendorInfo) {
       switch (vendorInfo.categoryName) {
@@ -366,7 +409,7 @@ const VendorDashboard = () => {
             filtered = filtered.filter(product => product.bestseller === true);
           }
           break;
-          
+
         case 'Medicine':
           if (categoryFilters.medicineType !== 'all') {
             filtered = filtered.filter(product => product.medicineType === categoryFilters.medicineType);
@@ -376,7 +419,7 @@ const VendorDashboard = () => {
             filtered = filtered.filter(product => product.prescriptionRequired === prescriptionRequired);
           }
           break;
-          
+
         case 'Groceries':
           if (categoryFilters.productType !== 'all') {
             filtered = filtered.filter(product => product.groceryType === categoryFilters.productType);
@@ -385,7 +428,7 @@ const VendorDashboard = () => {
             filtered = filtered.filter(product => product.organic === true);
           }
           break;
-          
+
         case 'Fruits & Vegetables':
           if (categoryFilters.fruitType !== 'all') {
             filtered = filtered.filter(product => product.fruitVegetableType === categoryFilters.fruitType);
@@ -397,7 +440,7 @@ const VendorDashboard = () => {
             filtered = filtered.filter(product => product.seasonal === true);
           }
           break;
-          
+
         case 'Meat & Fish':
           if (categoryFilters.meatType !== 'all') {
             filtered = filtered.filter(product => product.meatFishType === categoryFilters.meatType);
@@ -409,7 +452,7 @@ const VendorDashboard = () => {
             filtered = filtered.filter(product => product.freshFrozen === categoryFilters.freshFrozen);
           }
           break;
-          
+
         case 'Dress & Gadgets':
           if (categoryFilters.gender !== 'all') {
             filtered = filtered.filter(product => product.gender === categoryFilters.gender);
@@ -423,17 +466,17 @@ const VendorDashboard = () => {
           break;
       }
     }
-    
+
     // Sort filter
     switch (filters.sortBy) {
       case 'name':
         filtered.sort((a, b) => a.name.localeCompare(b.name));
         break;
       case 'priceLow':
-        filtered.sort((a, b) => a.price - b.price);
+        filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
         break;
       case 'priceHigh':
-        filtered.sort((a, b) => b.price - a.price);
+        filtered.sort((a, b) => (b.price || 0) - (a.price || 0));
         break;
       case 'newest':
         filtered.sort((a, b) => new Date(b.createdAt?.toDate?.() || b.createdAt) - new Date(a.createdAt?.toDate?.() || a.createdAt));
@@ -442,16 +485,16 @@ const VendorDashboard = () => {
         filtered.sort((a, b) => (b.bestseller ? 1 : 0) - (a.bestseller ? 1 : 0));
         break;
     }
-    
+
     setFilteredProducts(filtered);
   };
-  
+
   const handleLogout = async () => {
     try {
       // Clear session data
       sessionStorage.removeItem('vendorSession');
       localStorage.removeItem('vendorSession');
-      
+
       // Navigate to login
       navigate('/');
       toast.success('Logged out successfully');
@@ -460,92 +503,58 @@ const VendorDashboard = () => {
       toast.error('Logout failed');
     }
   };
-  
-  const uploadImageToFirebase = async (file) => {
-    try {
-      setUploading(true);
-      setUploadProgress(0);
-      
-      const timestamp = Date.now();
-      const fileName = `product_images/${vendorInfo.applicationId}/${timestamp}_${file.name}`;
-      const storageRef = ref(storage, fileName);
-      
-      // Simulate progress
-      const interval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(interval);
-            return 90;
-          }
-          return prev + 10;
-        });
-      }, 100);
-      
-      const snapshot = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      
-      clearInterval(interval);
-      setUploadProgress(100);
-      
-      return downloadURL;
-    } catch (error) {
-      console.error('Error uploading image:', error);
-      toast.error('Failed to upload image');
-      return null;
-    } finally {
-      setUploading(false);
-      setTimeout(() => setUploadProgress(0), 1000);
-    }
-  };
-  
+
+
+
   const handleAddProduct = async () => {
     try {
       setLoading(true);
-      
+
       // Validate required fields
       if (!newProduct.name.trim() || !newProduct.price || newProduct.price <= 0) {
         toast.error('Product name and price are required');
         return;
       }
-      
-      // Upload image if file is selected
-      let imageUrl = newProduct.image;
-      if (newProduct.imageFile) {
-        toast.info('Uploading product image...');
-        imageUrl = await uploadImageToFirebase(newProduct.imageFile);
-        if (!imageUrl) {
-          toast.error('Failed to upload image');
-          return;
-        }
-      }
-      
-      // Prepare product data based on category
+
+      // Use image URL directly
+      const imageUrl = newProduct.image;
+
+      // Determine Unit based on category
+      let unit = 'piece';
+      if (vendorInfo.categoryName === 'Groceries' && newProduct.weightUnit) unit = newProduct.weightUnit;
+      if (vendorInfo.categoryName === 'Fruits & Vegetables' && newProduct.weightUnitFruits) unit = newProduct.weightUnitFruits;
+      if (vendorInfo.categoryName === 'Meat & Fish' && newProduct.weightUnitMeat) unit = newProduct.weightUnitMeat;
+
+      // Prepare base product data
       const productData = {
-        // Common fields
-        name: newProduct.name.trim(),
-        description: newProduct.description.trim(),
+        // Required Fields
+        productName: newProduct.name.trim(),
+        productDescription: newProduct.description.trim(),
         price: parseFloat(newProduct.price),
-        image: imageUrl,
-        availability: newProduct.availability,
-        quantity: parseInt(newProduct.quantity) || 1,
-        isVeg: newProduct.isVeg,
-        
-        // Vendor info
-        vendorId: vendorInfo.id,
-        businessId: vendorInfo.businessId,
+        productImage: imageUrl,
+        stockQuantity: parseInt(newProduct.quantity) || 1,
+        unit: unit,
+        status: newProduct.availability ? 'active' : 'inactive',
+
+        // Vendor Info
+        hotelId: vendorInfo.id,
+        storeName: vendorInfo.businessName,
         applicationId: vendorInfo.applicationId,
         categoryId: vendorInfo.categoryId,
         categoryName: vendorInfo.categoryName,
-        businessName: vendorInfo.businessName,
-        
-        // Status
-        status: 'active',
-        
+
+        // Common Fields
+        requiresPrescription: newProduct.prescriptionRequired || false,
+        isVeg: newProduct.isVeg,
+        availability: newProduct.availability,
+
         // Timestamps
         createdAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        inStock: newProduct.inStock,
       };
-      
+
       // Add category-specific fields
       switch (vendorInfo.categoryName) {
         case 'Food':
@@ -557,7 +566,7 @@ const VendorDashboard = () => {
           productData.packagingType = newProduct.packagingType;
           productData.bestseller = newProduct.bestseller;
           break;
-          
+
         case 'Medicine':
           productData.medicineType = newProduct.medicineType;
           productData.expiryDate = newProduct.expiryDate;
@@ -568,18 +577,18 @@ const VendorDashboard = () => {
           productData.manufacturer = newProduct.manufacturer;
           productData.storageConditions = newProduct.storageConditions;
           productData.sideEffects = newProduct.sideEffects;
-          
+
           // Auto-disable if expired
           if (newProduct.expiryDate) {
             const expiryDate = new Date(newProduct.expiryDate);
             const today = new Date();
             if (expiryDate < today) {
+              productData.status = 'inactive';
               productData.availability = false;
-              productData.status = 'expired';
             }
           }
           break;
-          
+
         case 'Groceries':
           productData.groceryType = newProduct.groceryType;
           productData.netWeight = newProduct.netWeight;
@@ -589,7 +598,7 @@ const VendorDashboard = () => {
           productData.countryOfOrigin = newProduct.countryOfOrigin;
           productData.organic = newProduct.organic;
           break;
-          
+
         case 'Fruits & Vegetables':
           productData.fruitVegetableType = newProduct.fruitVegetableType;
           productData.weight = newProduct.weightFruits;
@@ -600,7 +609,7 @@ const VendorDashboard = () => {
           productData.seasonal = newProduct.seasonalFruit;
           productData.storageInstructions = newProduct.storageInstructionsFruits;
           break;
-          
+
         case 'Meat & Fish':
           productData.meatFishType = newProduct.meatFishType;
           productData.cutType = newProduct.cutType;
@@ -612,7 +621,7 @@ const VendorDashboard = () => {
           productData.deliverySlot = newProduct.deliverySlot;
           productData.storageInstructions = newProduct.storageInstructionsMeat;
           break;
-          
+
         case 'Dress & Gadgets':
           productData.gender = newProduct.gender;
           productData.size = newProduct.size;
@@ -624,43 +633,46 @@ const VendorDashboard = () => {
           productData.countryOfManufacture = newProduct.countryOfManufacture;
           break;
       }
-      
+
       if (editingProduct) {
-        // Update existing product
+        // Update existing product - remove createdAt for updates
+        delete productData.createdAt;
         productData.updatedAt = serverTimestamp();
-        await updateDoc(doc(db, 'menu', editingProduct.id), productData);
+        await updateDoc(doc(db, 'products', editingProduct.id), productData);
         toast.success('Product updated successfully!');
       } else {
-        // Add new product - save to menu collection
-        await addDoc(collection(db, 'menu'), productData);
-        toast.success('Product added successfully!');
+        // Add new product - save to products collection
+        const docRef = await addDoc(collection(db, 'products'), productData);
+        toast.success(`Product added successfully! ID: ${docRef.id}`);
       }
-      
+
       // Reset form and close modal
       setShowProductModal(false);
       setEditingProduct(null);
       resetProductForm();
-      
+
     } catch (error) {
       console.error('Error saving product:', error);
-      toast.error('Failed to save product');
+      toast.error(`Failed to save product: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
-  
+
   const handleEditProduct = (product) => {
     setEditingProduct(product);
     setNewProduct({
-      name: product.name || '',
-      description: product.description || '',
-      price: product.price || 0,
-      image: product.image || '',
-      imageFile: null,
-      availability: product.availability !== false,
-      quantity: product.quantity || 1,
+      name: product.productName || product.name || '',
+      description: product.productDescription || product.description || '',
+      price: product.price || '',
+      image: product.productImage || product.image || '',
+      price: product.price || '',
+      image: product.productImage || product.image || '',
+      inStock: product.inStock !== false,
+      availability: product.status === 'active' || product.availability === true,
+      quantity: product.stockQuantity || product.quantity || 1,
       isVeg: product.isVeg !== false,
-      
+
       // Food specific
       spiceLevel: product.spiceLevel || 'mild',
       cuisine: product.cuisine || '',
@@ -669,9 +681,9 @@ const VendorDashboard = () => {
       preparationTime: product.preparationTime || '',
       packagingType: product.packagingType || '',
       bestseller: product.bestseller || false,
-      
+
       // Medicine specific
-      medicineType: product.medicineType || '',
+      medicineType: product.medicineType || 'tablet',
       expiryDate: product.expiryDate || '',
       batchNumber: product.batchNumber || '',
       prescriptionRequired: product.prescriptionRequired || false,
@@ -680,18 +692,18 @@ const VendorDashboard = () => {
       manufacturer: product.manufacturer || '',
       storageConditions: product.storageConditions || '',
       sideEffects: product.sideEffects || '',
-      
+
       // Grocery specific
-      groceryType: product.groceryType || '',
+      groceryType: product.groceryType || 'staples',
       netWeight: product.netWeight || '',
       weightUnit: product.weightUnit || 'g',
       manufacturerGrocery: product.manufacturer || '',
       storageInstructions: product.storageInstructions || '',
       countryOfOrigin: product.countryOfOrigin || '',
       organic: product.organic || false,
-      
+
       // Fruits & Vegetables specific
-      fruitVegetableType: product.fruitVegetableType || '',
+      fruitVegetableType: product.fruitVegetableType || 'fruits',
       weightFruits: product.weight || '',
       weightUnitFruits: product.weightUnit || 'g',
       organicFruit: product.organic || false,
@@ -699,63 +711,121 @@ const VendorDashboard = () => {
       cutOption: product.cutOption || 'uncut',
       seasonalFruit: product.seasonal || false,
       storageInstructionsFruits: product.storageInstructions || '',
-      
+
       // Meat & Fish specific
-      meatFishType: product.meatFishType || '',
-      cutType: product.cutType || '',
+      meatFishType: product.meatFishType || 'chicken',
+      cutType: product.cutType || 'curry-cut',
       weightMeat: product.weight || '',
       weightUnitMeat: product.weightUnit || 'g',
       freshFrozen: product.freshFrozen || 'fresh',
       source: product.source || '',
       packagingTypeMeat: product.packagingType || '',
-      deliverySlot: product.deliverySlot || '',
+      deliverySlot: product.deliverySlot || 'morning',
       storageInstructionsMeat: product.storageInstructions || '',
-      
+
       // Dress & Gadgets specific
       gender: product.gender || 'unisex',
       size: product.size || '',
       colorOptions: product.colorOptions || '',
       fabricMaterial: product.fabricMaterial || '',
-      fitType: product.fitType || '',
+      fitType: product.fitType || 'regular',
       occasionDress: product.occasion || '',
       washCareInstructions: product.washCareInstructions || '',
       countryOfManufacture: product.countryOfManufacture || '',
     });
     setShowProductModal(true);
   };
-  
+
   const handleDeleteProduct = async (productId) => {
     if (!window.confirm('Are you sure you want to delete this product?')) return;
-    
+
     try {
-      await deleteDoc(doc(db, 'menu', productId));
+      await deleteDoc(doc(db, 'products', productId));
       toast.success('Product deleted successfully');
     } catch (error) {
       console.error('Error deleting product:', error);
       toast.error('Failed to delete product');
     }
   };
-  
-  const handleToggleAvailability = async (productId, currentStatus) => {
+
+  const handleToggleStock = async (productId, currentStatus) => {
     try {
-      await updateDoc(doc(db, 'menu', productId), {
-        availability: !currentStatus,
+      await updateDoc(doc(db, 'products', productId), {
+        inStock: !currentStatus,
         updatedAt: serverTimestamp()
       });
-      toast.success(`Product ${!currentStatus ? 'activated' : 'deactivated'}!`);
+      toast.success(`Product marked as ${!currentStatus ? 'In Stock' : 'Out of Stock'}`);
     } catch (error) {
-      console.error('Error updating availability:', error);
-      toast.error('Failed to update availability');
+      console.error('Error updating stock status:', error);
+      toast.error('Failed to update stock status');
     }
   };
-  
+
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(`Order status updated to ${newStatus}`);
+    } catch (error) {
+      console.error('Error updating order:', error);
+      toast.error('Failed to update order status');
+    }
+  };
+
+  const handleStoreStatusUpdate = async (newStatus) => {
+    try {
+      if (!vendorInfo?.id) return;
+
+      await updateDoc(doc(db, 'hotels', vendorInfo.id), {
+        open: newStatus
+      });
+
+      setVendorInfo(prev => ({ ...prev, open: newStatus }));
+      toast.success(newStatus ? 'Store is now OPEN' : 'Store is now CLOSED');
+    } catch (error) {
+      console.error('Error updating store status:', error);
+      toast.error('Failed to update store status');
+    }
+  };
+
+  const handleSaveTimings = async (e) => {
+    e.preventDefault();
+    try {
+      if (!vendorInfo?.id) return;
+
+      const openingTime = e.target.openingTime.value;
+      const closingTime = e.target.closingTime.value;
+
+      await updateDoc(doc(db, 'hotels', vendorInfo.id), {
+        openingTime,
+        closingTime
+      });
+
+      setVendorInfo(prev => ({
+        ...prev,
+        openingTime,
+        closingTime
+      }));
+
+      toast.success('Store timings updated successfully');
+    } catch (error) {
+      console.error('Error updating timings:', error);
+      toast.error('Failed to update timings');
+    }
+  };
+
   const resetProductForm = () => {
     setNewProduct({
       name: '',
       description: '',
-      price: 0,
+      price: '',
       image: '',
       imageFile: null,
+      image: '',
+      imageFile: null,
+      inStock: true,
       availability: true,
       quantity: 1,
       isVeg: true,
@@ -766,7 +836,7 @@ const VendorDashboard = () => {
       preparationTime: '',
       packagingType: '',
       bestseller: false,
-      medicineType: '',
+      medicineType: 'tablet',
       expiryDate: '',
       batchNumber: '',
       prescriptionRequired: false,
@@ -775,13 +845,13 @@ const VendorDashboard = () => {
       manufacturer: '',
       storageConditions: '',
       sideEffects: '',
-      groceryType: '',
+      groceryType: 'staples',
       netWeight: '',
       weightUnit: 'g',
       manufacturerGrocery: '',
       storageInstructions: '',
       countryOfOrigin: '',
-      fruitVegetableType: '',
+      fruitVegetableType: 'fruits',
       weightFruits: '',
       weightUnitFruits: 'g',
       organicFruit: false,
@@ -789,29 +859,29 @@ const VendorDashboard = () => {
       cutOption: 'uncut',
       seasonalFruit: false,
       storageInstructionsFruits: '',
-      meatFishType: '',
-      cutType: '',
+      meatFishType: 'chicken',
+      cutType: 'curry-cut',
       weightMeat: '',
       weightUnitMeat: 'g',
       freshFrozen: 'fresh',
       source: '',
       packagingTypeMeat: '',
-      deliverySlot: '',
+      deliverySlot: 'morning',
       storageInstructionsMeat: '',
       gender: 'unisex',
       size: '',
       colorOptions: '',
       fabricMaterial: '',
-      fitType: '',
+      fitType: 'regular',
       occasionDress: '',
       washCareInstructions: '',
       countryOfManufacture: '',
     });
   };
-  
+
   const renderCategorySpecificFields = () => {
     if (!vendorInfo) return null;
-    
+
     switch (vendorInfo.categoryName) {
       case 'Food':
         return (
@@ -826,7 +896,7 @@ const VendorDashboard = () => {
                       type="radio"
                       name="isVeg"
                       checked={newProduct.isVeg === true}
-                      onChange={(e) => setNewProduct({...newProduct, isVeg: true})}
+                      onChange={(e) => setNewProduct({ ...newProduct, isVeg: true })}
                       className="mr-2"
                     />
                     <span className="text-sm">Vegetarian</span>
@@ -836,19 +906,19 @@ const VendorDashboard = () => {
                       type="radio"
                       name="isVeg"
                       checked={newProduct.isVeg === false}
-                      onChange={(e) => setNewProduct({...newProduct, isVeg: false})}
+                      onChange={(e) => setNewProduct({ ...newProduct, isVeg: false })}
                       className="mr-2"
                     />
                     <span className="text-sm">Non-Vegetarian</span>
                   </label>
                 </div>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Spice Level</label>
                 <select
                   value={newProduct.spiceLevel}
-                  onChange={(e) => setNewProduct({...newProduct, spiceLevel: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, spiceLevel: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 >
                   <option value="mild">Mild</option>
@@ -857,69 +927,69 @@ const VendorDashboard = () => {
                   <option value="very-spicy">Very Spicy</option>
                 </select>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Cuisine</label>
                 <input
                   type="text"
                   value={newProduct.cuisine}
-                  onChange={(e) => setNewProduct({...newProduct, cuisine: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, cuisine: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="e.g., South Indian, Chinese"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Preparation Time</label>
                 <input
                   type="text"
                   value={newProduct.preparationTime}
-                  onChange={(e) => setNewProduct({...newProduct, preparationTime: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, preparationTime: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="e.g., 15-20 min"
                 />
               </div>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Ingredients</label>
               <textarea
                 value={newProduct.ingredients}
-                onChange={(e) => setNewProduct({...newProduct, ingredients: e.target.value})}
+                onChange={(e) => setNewProduct({ ...newProduct, ingredients: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 rows="2"
                 placeholder="List main ingredients"
               />
             </div>
-            
+
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Calories</label>
                 <input
                   type="text"
                   value={newProduct.calories}
-                  onChange={(e) => setNewProduct({...newProduct, calories: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, calories: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="e.g., 250 kcal"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Packaging Type</label>
                 <input
                   type="text"
                   value={newProduct.packagingType}
-                  onChange={(e) => setNewProduct({...newProduct, packagingType: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, packagingType: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="e.g., Biodegradable"
                 />
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
                 <input
                   type="checkbox"
                   checked={newProduct.bestseller}
-                  onChange={(e) => setNewProduct({...newProduct, bestseller: e.target.checked})}
+                  onChange={(e) => setNewProduct({ ...newProduct, bestseller: e.target.checked })}
                   className="w-4 h-4 text-yellow-600"
                 />
                 <label className="text-sm font-medium text-gray-700">Mark as Bestseller</label>
@@ -927,7 +997,7 @@ const VendorDashboard = () => {
             </div>
           </div>
         );
-        
+
       case 'Medicine':
         return (
           <div className="space-y-4">
@@ -937,10 +1007,9 @@ const VendorDashboard = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Medicine Type</label>
                 <select
                   value={newProduct.medicineType}
-                  onChange={(e) => setNewProduct({...newProduct, medicineType: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, medicineType: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 >
-                  <option value="">Select Type</option>
                   <option value="tablet">Tablet</option>
                   <option value="capsule">Capsule</option>
                   <option value="syrup">Syrup</option>
@@ -950,91 +1019,91 @@ const VendorDashboard = () => {
                   <option value="inhaler">Inhaler</option>
                 </select>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date *</label>
                 <input
                   type="date"
                   value={newProduct.expiryDate}
-                  onChange={(e) => setNewProduct({...newProduct, expiryDate: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, expiryDate: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   required
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Batch Number</label>
                 <input
                   type="text"
                   value={newProduct.batchNumber}
-                  onChange={(e) => setNewProduct({...newProduct, batchNumber: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, batchNumber: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="Batch number"
                 />
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
                 <input
                   type="checkbox"
                   checked={newProduct.prescriptionRequired}
-                  onChange={(e) => setNewProduct({...newProduct, prescriptionRequired: e.target.checked})}
+                  onChange={(e) => setNewProduct({ ...newProduct, prescriptionRequired: e.target.checked })}
                   className="w-4 h-4 text-red-600"
                 />
                 <label className="text-sm font-medium text-gray-700">Prescription Required</label>
               </div>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Salt Composition</label>
               <input
                 type="text"
                 value={newProduct.saltComposition}
-                onChange={(e) => setNewProduct({...newProduct, saltComposition: e.target.value})}
+                onChange={(e) => setNewProduct({ ...newProduct, saltComposition: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 placeholder="e.g., Paracetamol 500mg"
               />
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Dosage Instructions</label>
               <textarea
                 value={newProduct.dosageInstructions}
-                onChange={(e) => setNewProduct({...newProduct, dosageInstructions: e.target.value})}
+                onChange={(e) => setNewProduct({ ...newProduct, dosageInstructions: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 rows="2"
                 placeholder="e.g., Take 1 tablet twice daily after meals"
               />
             </div>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Manufacturer</label>
                 <input
                   type="text"
                   value={newProduct.manufacturer}
-                  onChange={(e) => setNewProduct({...newProduct, manufacturer: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, manufacturer: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="Manufacturer name"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Storage Conditions</label>
                 <input
                   type="text"
                   value={newProduct.storageConditions}
-                  onChange={(e) => setNewProduct({...newProduct, storageConditions: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, storageConditions: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="e.g., Store in cool dry place"
                 />
               </div>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Side Effects (Optional)</label>
               <textarea
                 value={newProduct.sideEffects}
-                onChange={(e) => setNewProduct({...newProduct, sideEffects: e.target.value})}
+                onChange={(e) => setNewProduct({ ...newProduct, sideEffects: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 rows="2"
                 placeholder="List possible side effects"
@@ -1042,7 +1111,7 @@ const VendorDashboard = () => {
             </div>
           </div>
         );
-        
+
       case 'Groceries':
         return (
           <div className="space-y-4">
@@ -1052,10 +1121,9 @@ const VendorDashboard = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Product Type</label>
                 <select
                   value={newProduct.groceryType}
-                  onChange={(e) => setNewProduct({...newProduct, groceryType: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, groceryType: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 >
-                  <option value="">Select Type</option>
                   <option value="staples">Staples</option>
                   <option value="snacks">Snacks</option>
                   <option value="beverages">Beverages</option>
@@ -1065,20 +1133,20 @@ const VendorDashboard = () => {
                   <option value="cleaning">Cleaning Supplies</option>
                 </select>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Net Weight/Volume</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={newProduct.netWeight}
-                    onChange={(e) => setNewProduct({...newProduct, netWeight: e.target.value})}
+                    onChange={(e) => setNewProduct({ ...newProduct, netWeight: e.target.value })}
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
                     placeholder="e.g., 500"
                   />
                   <select
                     value={newProduct.weightUnit}
-                    onChange={(e) => setNewProduct({...newProduct, weightUnit: e.target.value})}
+                    onChange={(e) => setNewProduct({ ...newProduct, weightUnit: e.target.value })}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   >
                     <option value="g">g</option>
@@ -1089,53 +1157,53 @@ const VendorDashboard = () => {
                   </select>
                 </div>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Manufacturer</label>
                 <input
                   type="text"
                   value={newProduct.manufacturerGrocery}
-                  onChange={(e) => setNewProduct({...newProduct, manufacturerGrocery: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, manufacturerGrocery: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="Manufacturer name"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Country of Origin</label>
                 <input
                   type="text"
                   value={newProduct.countryOfOrigin}
-                  onChange={(e) => setNewProduct({...newProduct, countryOfOrigin: e.target.value})}
+                  onChange={(e) => setNewProduct({ ...newProduct, countryOfOrigin: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   placeholder="e.g., India"
                 />
               </div>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Storage Instructions</label>
               <textarea
                 value={newProduct.storageInstructions}
-                onChange={(e) => setNewProduct({...newProduct, storageInstructions: e.target.value})}
+                onChange={(e) => setNewProduct({ ...newProduct, storageInstructions: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 rows="2"
                 placeholder="Storage instructions"
               />
             </div>
-            
+
             <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
               <input
                 type="checkbox"
                 checked={newProduct.organic}
-                onChange={(e) => setNewProduct({...newProduct, organic: e.target.checked})}
+                onChange={(e) => setNewProduct({ ...newProduct, organic: e.target.checked })}
                 className="w-4 h-4 text-green-600"
               />
               <label className="text-sm font-medium text-gray-700">Organic Product</label>
             </div>
           </div>
         );
-        
+
       default:
         return (
           <div className="space-y-4">
@@ -1145,10 +1213,10 @@ const VendorDashboard = () => {
         );
     }
   };
-  
+
   const renderCategoryFilters = () => {
     if (!vendorInfo) return null;
-    
+
     switch (vendorInfo.categoryName) {
       case 'Food':
         return (
@@ -1157,7 +1225,7 @@ const VendorDashboard = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Food Type</label>
               <select
                 value={categoryFilters.isVeg}
-                onChange={(e) => setCategoryFilters({...categoryFilters, isVeg: e.target.value})}
+                onChange={(e) => setCategoryFilters({ ...categoryFilters, isVeg: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
                 <option value="all">All Types</option>
@@ -1165,12 +1233,12 @@ const VendorDashboard = () => {
                 <option value="non-veg">Non-Vegetarian</option>
               </select>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Spice Level</label>
               <select
                 value={categoryFilters.spiceLevel}
-                onChange={(e) => setCategoryFilters({...categoryFilters, spiceLevel: e.target.value})}
+                onChange={(e) => setCategoryFilters({ ...categoryFilters, spiceLevel: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
                 <option value="all">All Levels</option>
@@ -1180,12 +1248,12 @@ const VendorDashboard = () => {
                 <option value="very-spicy">Very Spicy</option>
               </select>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cuisine</label>
               <select
                 value={categoryFilters.cuisine}
-                onChange={(e) => setCategoryFilters({...categoryFilters, cuisine: e.target.value})}
+                onChange={(e) => setCategoryFilters({ ...categoryFilters, cuisine: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
                 <option value="all">All Cuisines</option>
@@ -1196,19 +1264,19 @@ const VendorDashboard = () => {
                 <option value="mexican">Mexican</option>
               </select>
             </div>
-            
+
             <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
               <input
                 type="checkbox"
                 checked={categoryFilters.bestseller}
-                onChange={(e) => setCategoryFilters({...categoryFilters, bestseller: e.target.checked})}
+                onChange={(e) => setCategoryFilters({ ...categoryFilters, bestseller: e.target.checked })}
                 className="w-4 h-4 text-yellow-600"
               />
               <label className="text-sm font-medium text-gray-700">Bestseller Only</label>
             </div>
           </div>
         );
-        
+
       case 'Medicine':
         return (
           <div className="space-y-4">
@@ -1216,7 +1284,7 @@ const VendorDashboard = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Medicine Type</label>
               <select
                 value={categoryFilters.medicineType}
-                onChange={(e) => setCategoryFilters({...categoryFilters, medicineType: e.target.value})}
+                onChange={(e) => setCategoryFilters({ ...categoryFilters, medicineType: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
                 <option value="all">All Types</option>
@@ -1226,12 +1294,12 @@ const VendorDashboard = () => {
                 <option value="injection">Injection</option>
               </select>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Prescription Required</label>
               <select
                 value={categoryFilters.prescriptionRequired}
-                onChange={(e) => setCategoryFilters({...categoryFilters, prescriptionRequired: e.target.value})}
+                onChange={(e) => setCategoryFilters({ ...categoryFilters, prescriptionRequired: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
                 <option value="all">All</option>
@@ -1241,7 +1309,7 @@ const VendorDashboard = () => {
             </div>
           </div>
         );
-        
+
       default:
         return (
           <div className="text-sm text-gray-500 text-center py-4">
@@ -1291,26 +1359,26 @@ const VendorDashboard = () => {
               {/* Basic Information */}
               <div className="space-y-4">
                 <h3 className="font-semibold text-gray-700 text-sm border-b pb-2">Basic Information</h3>
-                
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Product Name *</label>
                     <input
                       type="text"
                       value={newProduct.name}
-                      onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                      onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                       placeholder="Enter product name"
                       required
                     />
                   </div>
-                  
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Price (₹) *</label>
                     <input
                       type="number"
                       value={newProduct.price}
-                      onChange={(e) => setNewProduct({...newProduct, price: parseFloat(e.target.value)})}
+                      onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                       placeholder="0.00"
                       min="0"
@@ -1319,39 +1387,39 @@ const VendorDashboard = () => {
                     />
                   </div>
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                   <textarea
                     value={newProduct.description}
-                    onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
+                    onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                     rows="3"
                     placeholder="Product description"
                   />
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
                     <input
                       type="number"
                       value={newProduct.quantity}
-                      onChange={(e) => setNewProduct({...newProduct, quantity: parseInt(e.target.value)})}
+                      onChange={(e) => setNewProduct({ ...newProduct, quantity: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                       placeholder="1"
                       min="1"
                     />
                   </div>
-                  
+
                   <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
                     <input
                       type="checkbox"
-                      checked={newProduct.availability}
-                      onChange={(e) => setNewProduct({...newProduct, availability: e.target.checked})}
+                      checked={newProduct.inStock}
+                      onChange={(e) => setNewProduct({ ...newProduct, inStock: e.target.checked })}
                       className="w-4 h-4 text-green-600"
                     />
-                    <label className="text-sm font-medium text-gray-700">Available for Sale</label>
+                    <label className="text-sm font-medium text-gray-700">In Stock</label>
                   </div>
                 </div>
               </div>
@@ -1359,73 +1427,6 @@ const VendorDashboard = () => {
               {/* Product Image */}
               <div className="space-y-4">
                 <h3 className="font-semibold text-gray-700 text-sm border-b pb-2">Product Image</h3>
-                
-                <div className={`border-2 border-dashed rounded-lg p-6 text-center ${uploading ? 'opacity-50' : ''}`}>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        if (!file.type.match('image.*')) {
-                          toast.error('Please select an image file');
-                          return;
-                        }
-                        if (file.size > 2 * 1024 * 1024) {
-                          toast.error('File size should be less than 2MB');
-                          return;
-                        }
-                        setNewProduct({...newProduct, imageFile: file, image: ''});
-                      }
-                    }}
-                    className="hidden"
-                    id="productImageUpload"
-                    disabled={uploading}
-                  />
-                  <label htmlFor="productImageUpload" className={`cursor-pointer block ${uploading ? 'cursor-not-allowed' : ''}`}>
-                    {uploading ? (
-                      <>
-                        <div className="w-12 h-12 mx-auto mb-3 relative">
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin"></div>
-                          </div>
-                        </div>
-                        <p className="text-sm text-gray-600">Uploading... {uploadProgress}%</p>
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                        <p className="text-sm text-gray-600">Click to upload product image</p>
-                        <p className="text-xs text-gray-500 mt-1">JPEG, PNG up to 2MB</p>
-                      </>
-                    )}
-                  </label>
-                  
-                  {newProduct.imageFile && !uploading && (
-                    <div className="mt-4">
-                      <p className="text-sm text-green-600">
-                        Selected: {newProduct.imageFile.name}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setNewProduct({...newProduct, imageFile: null})}
-                        className="text-sm text-red-600 hover:text-red-800 mt-2"
-                      >
-                        Remove image
-                      </button>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-gray-300"></div>
-                  </div>
-                  <div className="relative flex justify-center text-sm">
-                    <span className="px-2 bg-white text-gray-500">OR</span>
-                  </div>
-                </div>
-                
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Image URL
@@ -1433,11 +1434,20 @@ const VendorDashboard = () => {
                   <input
                     type="url"
                     value={newProduct.image}
-                    onChange={(e) => setNewProduct({...newProduct, image: e.target.value, imageFile: null})}
-                    disabled={!!newProduct.imageFile || uploading}
+                    onChange={(e) => setNewProduct({ ...newProduct, image: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                     placeholder="https://example.com/product-image.jpg"
                   />
+                  {newProduct.image && (
+                    <div className="mt-4 relative w-32 h-32 rounded-lg overflow-hidden border border-gray-200">
+                      <img
+                        src={newProduct.image}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => { e.target.style.display = 'none' }}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1464,7 +1474,7 @@ const VendorDashboard = () => {
   return (
     <div className="flex h-screen bg-gray-50">
       <ToastContainer position="top-right" autoClose={3000} />
-      
+
       {/* Sidebar */}
       <div className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-white border-r border-gray-200 transition-all duration-300`}>
         <div className="p-4 border-b border-gray-200">
@@ -1495,19 +1505,18 @@ const VendorDashboard = () => {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center ${sidebarOpen ? 'justify-start px-4' : 'justify-center'} py-3 my-1 rounded-lg transition-colors ${
-                activeTab === item.id 
-                  ? 'bg-yellow-50 text-yellow-700 border-r-2 border-yellow-500' 
-                  : 'text-gray-600 hover:bg-gray-100'
-              }`}
+              className={`w-full flex items-center ${sidebarOpen ? 'justify-start px-4' : 'justify-center'} py-3 my-1 rounded-lg transition-colors ${activeTab === item.id
+                ? 'bg-yellow-50 text-yellow-700 border-r-2 border-yellow-500'
+                : 'text-gray-600 hover:bg-gray-100'
+                }`}
             >
               {item.icon}
               {sidebarOpen && <span className="ml-3 text-sm font-medium">{item.label}</span>}
             </button>
           ))}
-          
+
           <div className="mt-4 pt-4 border-t border-gray-200">
-            <button 
+            <button
               onClick={handleLogout}
               className={`w-full flex items-center ${sidebarOpen ? 'justify-start px-4' : 'justify-center'} py-3 text-red-600 hover:bg-red-50 rounded-lg`}
             >
@@ -1525,17 +1534,17 @@ const VendorDashboard = () => {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-800 capitalize">
-                {activeTab === 'products' ? 'Product Management' : 
-                 activeTab === 'orders' ? 'Order Management' :
-                 activeTab === 'analytics' ? 'Analytics' :
-                 activeTab === 'settings' ? 'Settings' : 'Dashboard'}
+                {activeTab === 'products' ? 'Product Management' :
+                  activeTab === 'orders' ? 'Order Management' :
+                    activeTab === 'analytics' ? 'Analytics' :
+                      activeTab === 'settings' ? 'Settings' : 'Dashboard'}
               </h2>
               <p className="text-sm text-gray-500">
                 {vendorInfo?.categoryName} • {vendorInfo?.businessName}
               </p>
             </div>
             <div className="flex items-center space-x-4">
-              <button 
+              <button
                 onClick={() => setShowProductModal(true)}
                 className="px-4 py-2 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition flex items-center gap-2"
               >
@@ -1569,7 +1578,7 @@ const VendorDashboard = () => {
                   <h3 className="text-2xl font-bold text-gray-800 mt-4">{stats.totalProducts}</h3>
                   <p className="text-sm text-gray-500">Total Products</p>
                 </div>
-                
+
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <div className="flex items-center justify-between">
                     <div className="p-2 bg-green-100 text-green-600 rounded-lg">
@@ -1580,7 +1589,7 @@ const VendorDashboard = () => {
                   <h3 className="text-2xl font-bold text-gray-800 mt-4">{stats.activeProducts}</h3>
                   <p className="text-sm text-gray-500">Active Products</p>
                 </div>
-                
+
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <div className="flex items-center justify-between">
                     <div className="p-2 bg-red-100 text-red-600 rounded-lg">
@@ -1591,7 +1600,7 @@ const VendorDashboard = () => {
                   <h3 className="text-2xl font-bold text-gray-800 mt-4">{stats.outOfStock}</h3>
                   <p className="text-sm text-gray-500">Out of Stock</p>
                 </div>
-                
+
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <div className="flex items-center justify-between">
                     <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
@@ -1611,14 +1620,14 @@ const VendorDashboard = () => {
                     <h3 className="text-lg font-semibold text-gray-800">Recent Products</h3>
                     <p className="text-sm text-gray-500">Recently added products</p>
                   </div>
-                  <button 
+                  <button
                     onClick={() => setActiveTab('products')}
                     className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
                   >
                     View All
                   </button>
                 </div>
-                
+
                 <div className="space-y-3">
                   {loading ? (
                     <div className="text-center py-8">
@@ -1643,9 +1652,8 @@ const VendorDashboard = () => {
                         </div>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          product.availability ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
+                        <span className={`px-2 py-1 text-xs rounded-full ${product.availability ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          }`}>
                           {product.availability ? 'In Stock' : 'Out of Stock'}
                         </span>
                         {product.bestseller && (
@@ -1656,7 +1664,7 @@ const VendorDashboard = () => {
                       </div>
                     </div>
                   ))}
-                  
+
                   {products.length === 0 && !loading && (
                     <div className="text-center py-8 text-gray-500">
                       No products yet. Add your first product!
@@ -1680,12 +1688,12 @@ const VendorDashboard = () => {
                     </div>
                     <div className="flex items-center space-x-3">
                       <button
-                        onClick={() => setFilters({...filters, viewMode: filters.viewMode === 'grid' ? 'list' : 'grid'})}
+                        onClick={() => setFilters({ ...filters, viewMode: filters.viewMode === 'grid' ? 'list' : 'grid' })}
                         className="p-2 hover:bg-gray-100 rounded-lg"
                       >
                         {filters.viewMode === 'grid' ? <List className="w-5 h-5" /> : <Grid className="w-5 h-5" />}
                       </button>
-                      <button 
+                      <button
                         onClick={() => setShowProductModal(true)}
                         className="px-4 py-2 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition flex items-center gap-2"
                       >
@@ -1704,24 +1712,24 @@ const VendorDashboard = () => {
                         placeholder="Search products..."
                         className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
                         value={filters.search}
-                        onChange={(e) => setFilters({...filters, search: e.target.value})}
+                        onChange={(e) => setFilters({ ...filters, search: e.target.value })}
                       />
                     </div>
-                    
-                    <select 
+
+                    <select
                       className="px-4 py-2 border border-gray-300 rounded-lg text-sm"
                       value={filters.availability}
-                      onChange={(e) => setFilters({...filters, availability: e.target.value})}
+                      onChange={(e) => setFilters({ ...filters, availability: e.target.value })}
                     >
                       <option value="all">All Products</option>
                       <option value="active">In Stock</option>
                       <option value="outOfStock">Out of Stock</option>
                     </select>
-                    
-                    <select 
+
+                    <select
                       className="px-4 py-2 border border-gray-300 rounded-lg text-sm"
                       value={filters.sortBy}
-                      onChange={(e) => setFilters({...filters, sortBy: e.target.value})}
+                      onChange={(e) => setFilters({ ...filters, sortBy: e.target.value })}
                     >
                       <option value="name">Sort by Name</option>
                       <option value="priceLow">Price: Low to High</option>
@@ -1730,7 +1738,7 @@ const VendorDashboard = () => {
                       <option value="bestseller">Bestseller First</option>
                     </select>
                   </div>
-                  
+
                   {/* Category Specific Filters */}
                   <div className="mb-6">
                     <h4 className="text-sm font-medium text-gray-700 mb-3">Category Filters</h4>
@@ -1739,7 +1747,7 @@ const VendorDashboard = () => {
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Quick Stats */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <h3 className="text-lg font-semibold text-gray-800 mb-4">Quick Stats</h3>
@@ -1757,7 +1765,7 @@ const VendorDashboard = () => {
                       <span className="font-semibold text-red-600">{stats.outOfStock}</span>
                     </div>
                     <div className="pt-4 border-t">
-                      <button 
+                      <button
                         onClick={() => {
                           setFilters({
                             search: '',
@@ -1806,7 +1814,7 @@ const VendorDashboard = () => {
                     </p>
                   </div>
                 </div>
-                
+
                 {loading ? (
                   <div className="text-center py-12">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-500 mx-auto"></div>
@@ -1822,7 +1830,7 @@ const VendorDashboard = () => {
                       {products.length === 0 ? 'Add your first product to get started!' : 'Try changing your filters'}
                     </p>
                     {products.length === 0 && (
-                      <button 
+                      <button
                         onClick={() => setShowProductModal(true)}
                         className="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
                       >
@@ -1838,9 +1846,9 @@ const VendorDashboard = () => {
                         {/* Product Image */}
                         <div className="h-48 bg-gray-100 overflow-hidden relative">
                           {product.image ? (
-                            <img 
-                              src={product.image} 
-                              alt={product.name} 
+                            <img
+                              src={product.image}
+                              alt={product.name}
                               className="w-full h-full object-cover"
                             />
                           ) : (
@@ -1848,7 +1856,7 @@ const VendorDashboard = () => {
                               <Package className="w-12 h-12 text-gray-400" />
                             </div>
                           )}
-                          {!product.availability && (
+                          {!product.inStock && (
                             <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                               <span className="text-white font-semibold bg-red-500 px-3 py-1 rounded-full text-sm">
                                 Out of Stock
@@ -1884,14 +1892,14 @@ const VendorDashboard = () => {
                             )}
                           </div>
                         </div>
-                        
+
                         {/* Product Info */}
                         <div className="p-4">
                           <h4 className="font-semibold text-gray-800 truncate">{product.name}</h4>
                           <p className="text-sm text-gray-600 mt-1 line-clamp-2 h-10">
                             {product.description || 'No description'}
                           </p>
-                          
+
                           <div className="mt-4 flex items-center justify-between">
                             <div>
                               <span className="text-lg font-bold text-gray-800">₹{product.price}</span>
@@ -1899,7 +1907,7 @@ const VendorDashboard = () => {
                                 <p className="text-xs text-gray-500">Qty: {product.quantity}</p>
                               )}
                             </div>
-                            
+
                             {/* Category-specific info */}
                             {vendorInfo.categoryName === 'Food' && product.spiceLevel && (
                               <span className="text-xs px-2 py-1 bg-orange-100 text-orange-800 rounded-full">
@@ -1907,18 +1915,17 @@ const VendorDashboard = () => {
                               </span>
                             )}
                           </div>
-                          
+
                           {/* Action Buttons */}
                           <div className="mt-4 flex items-center space-x-2">
                             <button
-                              onClick={() => handleToggleAvailability(product.id, product.availability)}
-                              className={`flex-1 py-2 text-sm rounded-lg ${
-                                product.availability 
-                                  ? 'bg-red-50 text-red-700 hover:bg-red-100' 
-                                  : 'bg-green-50 text-green-700 hover:bg-green-100'
-                              }`}
+                              onClick={() => handleToggleStock(product.id, product.inStock)}
+                              className={`flex-1 py-2 text-sm rounded-lg ${product.inStock
+                                ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                                : 'bg-green-50 text-green-700 hover:bg-green-100'
+                                }`}
                             >
-                              {product.availability ? 'Deactivate' : 'Activate'}
+                              {product.inStock ? 'Mark Out of Stock' : 'Mark In Stock'}
                             </button>
                             <button
                               onClick={() => handleEditProduct(product)}
@@ -1997,10 +2004,9 @@ const VendorDashboard = () => {
                             </td>
                             <td className="px-6 py-4">
                               <div className="flex flex-col space-y-1">
-                                <span className={`px-2 py-1 text-xs rounded-full w-fit ${
-                                  product.availability ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                                }`}>
-                                  {product.availability ? 'In Stock' : 'Out of Stock'}
+                                <span className={`px-2 py-1 text-xs rounded-full w-fit ${product.inStock ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                  }`}>
+                                  {product.inStock ? 'In Stock' : 'Out of Stock'}
                                 </span>
                                 {product.bestseller && (
                                   <span className="px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-full w-fit">
@@ -2012,11 +2018,11 @@ const VendorDashboard = () => {
                             <td className="px-6 py-4">
                               <div className="flex items-center space-x-2">
                                 <button
-                                  onClick={() => handleToggleAvailability(product.id, product.availability)}
+                                  onClick={() => handleToggleStock(product.id, product.inStock)}
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg"
-                                  title={product.availability ? 'Deactivate' : 'Activate'}
+                                  title={product.inStock ? 'Mark Out of Stock' : 'Mark In Stock'}
                                 >
-                                  {product.availability ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                  {product.inStock ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                                 </button>
                                 <button
                                   onClick={() => handleEditProduct(product)}
@@ -2045,11 +2051,187 @@ const VendorDashboard = () => {
           )}
 
           {/* OTHER TABS */}
-          {['orders', 'analytics', 'settings'].includes(activeTab) && vendorInfo && (
+          {activeTab === 'orders' && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+              <div className="p-6 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-800">Order Management</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {orders.length === 0 ? (
+                      <tr>
+                        <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
+                          No orders found
+                        </td>
+                      </tr>
+                    ) : (
+                      orders.map((order) => (
+                        <tr key={order.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 font-medium text-gray-900">
+                            #{order.id.slice(0, 8)}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-900">
+                            {order.customerName || order.userName || 'Guest'}
+                            <div className="text-xs text-gray-500">{order.deliveryAddress?.city}</div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            {order.items?.length || 0} items
+                          </td>
+                          <td className="px-6 py-4 font-medium text-gray-900">
+                            ₹{order.totalAmount || order.amount}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2 py-1 text-xs rounded-full ${order.status === 'delivered' ? 'bg-green-100 text-green-800' :
+                              order.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                                order.status === 'ready' ? 'bg-blue-100 text-blue-800' :
+                                  order.status === 'preparing' ? 'bg-yellow-100 text-yellow-800' :
+                                    'bg-gray-100 text-gray-800'
+                              }`}>
+                              {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            {order.createdAt?.toDate?.().toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center space-x-2">
+                              {/* Action Buttons based on status */}
+                              {order.status === 'placed' && (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateOrderStatus(order.id, 'preparing')}
+                                    className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded hover:bg-green-100"
+                                  >
+                                    Accept
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}
+                                    className="px-3 py-1 bg-red-50 text-red-700 text-xs rounded hover:bg-red-100"
+                                  >
+                                    Reject
+                                  </button>
+                                </>
+                              )}
+                              {order.status === 'preparing' && (
+                                <button
+                                  onClick={() => handleUpdateOrderStatus(order.id, 'ready')}
+                                  className="px-3 py-1 bg-blue-50 text-blue-700 text-xs rounded hover:bg-blue-100"
+                                >
+                                  Mark Ready
+                                </button>
+                              )}
+                              {order.status === 'ready' && (
+                                <span className="text-xs text-blue-600">Waiting for pickup</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'analytics' && vendorInfo && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
               <div className="text-3xl mb-4">🚧</div>
               <h3 className="text-lg font-semibold text-gray-800 mb-2">Coming Soon</h3>
-              <p className="text-gray-600">This section is under development</p>
+              <p className="text-gray-600">Analytics section is under development</p>
+            </div>
+          )}
+
+          {activeTab === 'settings' && vendorInfo && (
+            <div className="max-w-2xl mx-auto space-y-6">
+              {/* Store Status Card */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-800">Store Status</h3>
+                    <p className="text-sm text-gray-500">Open or close your store manually</p>
+                  </div>
+                  <div className={`px-3 py-1 rounded-full text-sm font-medium ${vendorInfo.open ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                    }`}>
+                    {vendorInfo.open ? 'OPEN' : 'CLOSED'}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-medium text-gray-700">Currently:</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={vendorInfo.open}
+                      onChange={(e) => handleStoreStatusUpdate(e.target.checked)}
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Store Timings Card */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-gray-800">Store Timings</h3>
+                  <p className="text-sm text-gray-500">Set your standard opening and closing hours</p>
+                </div>
+
+                <form onSubmit={handleSaveTimings} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Opening Time
+                      </label>
+                      <div className="relative">
+                        <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                          type="time"
+                          name="openingTime"
+                          defaultValue={vendorInfo.openingTime}
+                          className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Closing Time
+                      </label>
+                      <div className="relative">
+                        <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                          type="time"
+                          name="closingTime"
+                          defaultValue={vendorInfo.closingTime}
+                          className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-4">
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-yellow-500 text-white font-medium rounded-lg hover:bg-yellow-600 transition"
+                    >
+                      Save Timings
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
         </main>

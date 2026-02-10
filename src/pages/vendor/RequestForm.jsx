@@ -9,7 +9,7 @@ import 'react-toastify/dist/ReactToastify.css';
 const RequestForm = () => {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     // Section 1: Basic Business Information
     businessName: '',
@@ -34,17 +34,17 @@ const RequestForm = () => {
     openingTime: '',
     closingTime: '',
     deliveryAvailable: true,
-    
+
     // Store Image/Image URL (Important for store listing)
     storeImage: null,
     storeImageUrl: '',
-    
+
     // Business specific fields based on category - ALL fields from Admin Dashboard
     // These fields will populate filters in StoreListingScreen
     isVeg: false,
     cuisine: 'South Indian',
     priceRange: '₹₹',
-    
+
     // Medicine specific fields
     medicineType: 'Pharmacy',
     requiresPrescription: false,
@@ -52,28 +52,28 @@ const RequestForm = () => {
     generic: false,
     discounted: false,
     inStock: true,
-    
+
     // Groceries specific fields
     groceryType: 'Supermarket',
     organic: false,
     comboPacks: false,
     fastDelivery: false,
-    
+
     // Fruits & Vegetables specific fields
     fruitsType: 'Fruits Store',
     quality: 'Non-Organic',
     seasonal: false,
     freshArrival: false,
-    
+
     // Meat & Fish specific fields
     meatType: 'Meat Shop',
     todaysCatch: false,
     bestSeller: false,
-    
+
     // Dress & Gadgets specific fields
     dressType: 'Clothing Store',
     newArrivals: false,
-    
+
     // Additional business details for all categories
     description: '',
     rating: 4.5,
@@ -261,7 +261,7 @@ const RequestForm = () => {
     const selectedCategory = categories.find(cat => cat.id === formData.storeCategory);
     if (selectedCategory) {
       const categoryName = selectedCategory.name;
-      
+
       // Food category validation
       if (categoryName === 'Food') {
         if (!formData.cuisine) {
@@ -271,27 +271,27 @@ const RequestForm = () => {
           newErrors.priceRange = 'Price range is required for food category';
         }
       }
-      
+
       // Medicine category validation
       if (categoryName === 'Medicine' && !formData.medicineType) {
         newErrors.medicineType = 'Medicine type is required for medical stores';
       }
-      
+
       // Groceries category validation
       if (categoryName === 'Groceries' && !formData.groceryType) {
         newErrors.groceryType = 'Grocery type is required';
       }
-      
+
       // Fruits & Vegetables category validation
       if (categoryName === 'Fruits & Vegetables' && !formData.fruitsType) {
         newErrors.fruitsType = 'Store type is required for fruits & vegetables';
       }
-      
+
       // Meat & Fish category validation
       if (categoryName === 'Meat & Fish' && !formData.meatType) {
         newErrors.meatType = 'Shop type is required for meat & fish';
       }
-      
+
       // Dress & Gadgets category validation
       if (categoryName === 'Dress & Gadgets' && !formData.dressType) {
         newErrors.dressType = 'Store type is required for dress & gadgets';
@@ -352,7 +352,7 @@ const RequestForm = () => {
       // Create preview
       const previewUrl = URL.createObjectURL(file);
       setImagePreview(previewUrl);
-      
+
       // Clear error
       if (errors.storeImage) {
         setErrors(prev => ({ ...prev, storeImage: '' }));
@@ -399,7 +399,7 @@ const RequestForm = () => {
       // Get selected category name
       const selectedCategory = categories.find(cat => cat.id === value);
       const categoryName = selectedCategory ? selectedCategory.name : '';
-      
+
       // Reset category-specific fields when category changes
       setFormData(prev => ({
         ...prev,
@@ -446,7 +446,7 @@ const RequestForm = () => {
   // Render business-specific fields based on category
   const renderBusinessSpecificFields = () => {
     const categoryName = getCategoryName(formData.storeCategory);
-    
+
     switch (categoryName) {
       case 'Food':
         return (
@@ -495,7 +495,7 @@ const RequestForm = () => {
                 )}
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
@@ -509,7 +509,7 @@ const RequestForm = () => {
                   Pure Vegetarian (Will appear in Veg/Non-Veg filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -522,7 +522,7 @@ const RequestForm = () => {
                   Bestseller (Will appear in Bestseller filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -566,7 +566,7 @@ const RequestForm = () => {
                 )}
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
@@ -580,7 +580,7 @@ const RequestForm = () => {
                   24×7 Store (Will appear in 24×7 filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -593,7 +593,7 @@ const RequestForm = () => {
                   Generic Medicines Available (Will appear in Generic filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -606,7 +606,7 @@ const RequestForm = () => {
                   Discounted Medicines (Will appear in Discounted filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -620,7 +620,7 @@ const RequestForm = () => {
                 </label>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
               <input
                 type="checkbox"
@@ -664,7 +664,7 @@ const RequestForm = () => {
                 )}
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
@@ -678,7 +678,7 @@ const RequestForm = () => {
                   Organic Products (Will appear in Organic filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -691,7 +691,7 @@ const RequestForm = () => {
                   Combo Packs Available (Will appear in Combo Packs filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -704,7 +704,7 @@ const RequestForm = () => {
                   Fast Delivery (Will appear in Fast Delivery filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -748,7 +748,7 @@ const RequestForm = () => {
                   <p className="text-red-500 text-sm mt-1">{errors.fruitsType}</p>
                 )}
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Quality Type *</label>
                 <select
@@ -762,7 +762,7 @@ const RequestForm = () => {
                 </select>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
@@ -776,7 +776,7 @@ const RequestForm = () => {
                   Seasonal Products (Will appear in Seasonal filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -789,7 +789,7 @@ const RequestForm = () => {
                   Fresh Arrival (Will appear in Fresh Arrival filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -839,7 +839,7 @@ const RequestForm = () => {
                 )}
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
@@ -853,7 +853,7 @@ const RequestForm = () => {
                   Today's Catch (Will appear in Today's Catch filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -919,7 +919,7 @@ const RequestForm = () => {
                 )}
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
@@ -933,7 +933,7 @@ const RequestForm = () => {
                   New Arrivals (Will appear in New Arrivals filter)
                 </label>
               </div>
-              
+
               <div className="flex items-center gap-2 p-3 bg-white rounded-xl">
                 <input
                   type="checkbox"
@@ -961,7 +961,7 @@ const RequestForm = () => {
       <div className="space-y-4 mt-4 p-4 bg-gray-50 rounded-lg">
         <h3 className="font-semibold text-gray-700 text-sm border-b pb-2">Store Image (Required for Store Listing)</h3>
         <p className="text-sm text-gray-600 mb-4">This image will appear in the store listing and is mandatory for better visibility.</p>
-        
+
         <div className="space-y-4">
           {/* Image Upload Option */}
           <div className={`border-2 border-dashed rounded-lg p-6 text-center ${errors.storeImage ? 'border-red-500 bg-red-50' : 'border-gray-300'}`}>
@@ -1103,7 +1103,7 @@ const RequestForm = () => {
             />
           </div>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Website URL (Optional)</label>
@@ -1116,7 +1116,7 @@ const RequestForm = () => {
               placeholder="https://example.com"
             />
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Delivery Radius (km)</label>
             <input
@@ -1131,7 +1131,7 @@ const RequestForm = () => {
             />
           </div>
         </div>
-        
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Business Description</label>
           <textarea
@@ -1143,7 +1143,7 @@ const RequestForm = () => {
             placeholder="Brief description about your business, specialties, etc. This will appear in store listing."
           ></textarea>
         </div>
-        
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Special Offers (Will appear in Offers filter)</label>
           <input
@@ -1197,6 +1197,15 @@ const RequestForm = () => {
     return `VEND${timestamp.toString().slice(-6)}${random.toString().padStart(3, '0')}`;
   };
 
+  const fileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -1217,7 +1226,7 @@ const RequestForm = () => {
       // Prepare filters object based on category
       let filters = {};
       const selectedCategoryName = getCategoryName(formData.storeCategory);
-      
+
       switch (selectedCategoryName) {
         case 'Food':
           filters = {
@@ -1271,37 +1280,43 @@ const RequestForm = () => {
           break;
       }
 
+      // Handle Image Conversion
+      let imageBase64 = '';
+      if (formData.storeImage) {
+        imageBase64 = await fileToBase64(formData.storeImage);
+      }
+
       // Prepare data for hotels collection
       const hotelData = {
         // Basic Info
         name: formData.businessName.trim(),
         description: formData.description.trim(),
-        
+
         // Category Information
         categoryId: categoryId,
         categoryName: categoryName,
-        
+
         // Contact Information
         email: formData.email.trim(),
         phone: formData.mobile.trim(),
         address: formData.storeAddress.trim(),
-        
+
         // Owner Information
         ownerName: formData.ownerName.trim(),
         operatingCity: formData.operatingCity.trim(),
-        
+
         // Ratings & Pricing
         rating: parseFloat(formData.rating) || 4.5,
-        
+
         // Delivery Info
         deliveryTime: formData.deliveryTime.trim(),
         deliveryFee: parseFloat(formData.deliveryFee) || 40,
         minOrder: parseFloat(formData.minOrder) || 150,
         avgPreparationTime: formData.avgPreparationTime || '20-40',
-        
+
         // Business Type
         businessType: categoryName === 'Food' ? 'restaurant' : 'store',
-        
+
         // Category-specific data (for filters)
         ...(categoryName === 'Food' && {
           cuisine: formData.cuisine,
@@ -1331,59 +1346,59 @@ const RequestForm = () => {
           priceRange: formData.priceRange,
           isVeg: false
         }),
-        
+
         // Media - Store Image
-        image: formData.storeImageUrl || '', // Will be updated with actual image if uploaded
-        imageStorageType: formData.storeImage ? 'pending_upload' : 'url',
+        image: formData.storeImage ? imageBase64 : (formData.storeImageUrl || ''),
+        imageStorageType: formData.storeImage ? 'base64' : (formData.storeImageUrl ? 'url' : 'url'),
         offers: formData.offers.trim(),
-        
+
         // Filters for store listing
         filters: filters,
-        
+
         // Status & Settings
         status: 'pending',
         featured: formData.featured,
         open: formData.open,
         hygienePass: formData.hygienePass,
-        
+
         // Business Metrics
         commissionRate: formData.commissionRate || 15,
         deliveryRadius: formData.deliveryRadius || 5,
         orderCount: 0,
         totalEarnings: 0,
-        
+
         // Timestamps
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        
+
         // Additional fields
         website: formData.website || '',
-        
+
         // Store timings
         openingTime: formData.openingTime,
         closingTime: formData.closingTime,
         deliveryAvailable: formData.deliveryAvailable,
-        
+
         // Application details (for tracking)
         applicationId: applicationId,
         verificationStatus: 'pending',
         viewedByAdmin: false,
         rejectionReason: '',
-        
+
         // Legal information
         governmentIdType: formData.governmentIdType,
         governmentIdNumber: formData.governmentIdNumber,
         licenseType: formData.licenseType,
         licenseNumber: formData.licenseNumber,
         businessRegistrationType: formData.businessRegistrationType,
-        
+
         // Bank details
         accountHolderName: formData.accountHolderName.trim(),
         bankName: formData.bankName.trim(),
         accountNumber: formData.accountNumber.trim(),
         ifscCode: formData.ifscCode.toUpperCase(),
         upiId: formData.upiId.trim(),
-        
+
         // Additional filter fields
         bestSeller: formData.bestSeller || false,
         newArrivals: formData.newArrivals || false,
@@ -2003,7 +2018,7 @@ const RequestForm = () => {
                       <p className="text-sm text-gray-600">Timings: {formData.openingTime} - {formData.closingTime}</p>
                       <p className="text-sm text-gray-600">Delivery: {formData.deliveryAvailable ? 'Yes' : 'No'}</p>
                       <p className="text-sm text-gray-600">Image: {formData.storeImage || formData.storeImageUrl ? 'Provided' : 'Not Provided'}</p>
-                      
+
                       {/* Category-specific details */}
                       {formData.cuisine && (
                         <>
