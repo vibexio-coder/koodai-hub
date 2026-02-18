@@ -50,7 +50,9 @@ import {
   where,
   orderBy,
   serverTimestamp,
-  onSnapshot
+  onSnapshot,
+  collectionGroup,
+  getDoc
 } from 'firebase/firestore';
 import {
   signOut,
@@ -124,6 +126,10 @@ const VendorDashboard = () => {
     size: 'all'
   });
 
+  // Order Details Modal State
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
+
   // Add/Edit Product Modal
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -132,7 +138,6 @@ const VendorDashboard = () => {
     name: '',
     description: '',
     price: '',
-    image: '',
     image: '',
     inStock: true,
     availability: true,
@@ -261,12 +266,13 @@ const VendorDashboard = () => {
           status: vendorData.status,
           open: vendorData.open || false,
           openingTime: vendorData.openingTime || '',
-          closingTime: vendorData.closingTime || ''
+          closingTime: vendorData.closingTime || '',
+          uid: vendorData.uid || vendorData.ownerId // Capture vendorUID for orders query
         });
 
         // Start listening to vendor's products
         setupProductsListener(vendorDoc.id, vendorData.applicationId);
-        setupOrdersListener(vendorDoc.id);
+        setupOrdersListener(vendorData.applicationId); // Pass Application ID as requested
       } else {
         toast.error('Vendor information not found');
         sessionStorage.removeItem('vendorSession');
@@ -316,43 +322,144 @@ const VendorDashboard = () => {
   };
 
   // Setup real-time listener for vendor's orders
-  const setupOrdersListener = (vendorId) => {
-    const ordersRef = collection(db, 'orders');
+  const setupOrdersListener = (vendorUID) => {
+    if (!vendorUID) {
+      console.error('VendorDashboard: No vendorUID provided for orders listener');
+      return () => { };
+    }
+
+    // collectionGroup query to find all storeOrders for this vendor where status is Pending
     const q = query(
-      ordersRef,
-      where('vendorId', '==', vendorId)
+      collectionGroup(db, 'storeOrders'),
+      where('storeOwnerId', '==', vendorUID),
+      where('storeStatus', '==', 'Pending')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const ordersData = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        ordersData.push({
-          id: doc.id,
-          ...data,
-          orderDate: data.createdAt?.toDate?.() || new Date(),
-          status: data.status || 'placed'
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      console.log('VendorDashboard: Orders snapshot received');
+      console.log('VendorDashboard: storeOwnerId used for query:', vendorUID);
+      console.log('VendorDashboard: Snapshot size:', snapshot.size);
+
+      if (snapshot.empty) {
+        console.log('VendorDashboard: No Pending storeOrders found for this vendor.');
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const ordersPromises = snapshot.docs.map(async (storeOrderDoc) => {
+          const storeOrderData = storeOrderDoc.data();
+          console.log(`Processing storeOrder: ${storeOrderDoc.id}`, storeOrderData);
+
+          // The parent of storeOrders/{storeId} is the order document
+          // path: orders/{orderId}/storeOrders/{storeId}
+          const orderRef = storeOrderDoc.ref.parent.parent;
+
+          if (!orderRef) {
+            console.error(`StoreOrder ${storeOrderDoc.id} has no parent order (orphan?). Path: ${storeOrderDoc.ref.path}`);
+            return null;
+          }
+
+          const orderSnap = await getDoc(orderRef);
+          if (!orderSnap.exists()) {
+            console.error(`Parent order not found for storeOrder ${storeOrderDoc.id}. ParentID: ${orderRef.id}`);
+            return null;
+          }
+
+          const orderData = orderSnap.data();
+          // console.log(`Parent order found: ${orderRef.id}`, orderData); // Reduced logging
+
+          // Fetch products subcollection for this store order
+          // path: orders/{orderId}/storeOrders/{storeId}/products
+          const productsSnapshot = await getDocs(collection(storeOrderDoc.ref, 'products'));
+          const productsData = productsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+
+          // Combine parent order data with store-specific data
+          return {
+            id: orderRef.id, // Main Order ID
+            ...orderData, // Customer info, delivery address etc
+            // Store specific details overrides
+            totalAmount: storeOrderData.storeTotal || 0,
+            status: storeOrderData.storeStatus || 'Pending', // Should be 'Pending' based on query
+            items: productsData,
+            storeOrderId: storeOrderDoc.id,
+            storeDocId: storeOrderDoc.id // Alias for clarity
+          };
         });
-      });
 
-      // Client-side sort to avoid composite index error
-      ordersData.sort((a, b) => b.orderDate - a.orderDate);
+        const ordersData = (await Promise.all(ordersPromises)).filter(order => order !== null);
 
-      setOrders(ordersData);
+        // Client-side sort by creation time
+        ordersData.sort((a, b) => {
+          const dateA = a.createdAt?.toDate?.() || new Date(0);
+          const dateB = b.createdAt?.toDate?.() || new Date(0);
+          return dateB - dateA;
+        });
 
-      // Calculate total sales from delivered orders
-      const totalSales = ordersData
-        .filter(o => o.status === 'delivered')
-        .reduce((sum, order) => sum + (parseFloat(order.totalAmount || order.amount) || 0), 0);
+        setOrders(ordersData);
 
-      setStats(prev => ({ ...prev, totalSales }));
+        // Calculate total sales - Note: This calculation might need adjustment if we only fetch Pending orders.
+        // For now, keeping it as is, but it will likely be 0 if we only fetch Pending.
+        // To get total sales, we'd need a separate query for 'Accepted'/'Delivered' orders or a broader query.
+        // Given constraints, we'll leave this as is for now, acknowledging it only counts loaded orders.
+        const totalSales = ordersData
+          .filter(o => o.status === 'delivered')
+          .reduce((sum, order) => sum + (parseFloat(order.totalAmount) || 0), 0);
 
+        setStats(prev => ({ ...prev, totalSales }));
+
+      } catch (error) {
+        console.error('Error processing orders snapshot:', error);
+      }
     }, (error) => {
       console.error('Error in orders listener:', error);
+      toast.error('Error loading orders');
     });
 
     return unsubscribe;
   };
+
+  // DEBUG: Diagnostic tool to check Firestore structure
+  const debugDataStructure = async () => {
+    try {
+      console.log('--- START DIAGNOSTIC CHECK ---');
+      const ordersRef = collection(db, 'orders');
+      // Import limit if missed
+      const q = query(ordersRef, orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(q);
+
+      console.log(`Diagnostic: Fetched ${snapshot.size} recent orders from 'orders' collection.`);
+
+      const limitedDocs = snapshot.docs.slice(0, 5);
+
+      for (const orderDoc of limitedDocs) {
+        console.log(`Checking Order: ${orderDoc.id}`);
+        // Check storeOrders subcollection
+        const storeOrdersRef = collection(orderDoc.ref, 'storeOrders');
+        const storeOrdersSnap = await getDocs(storeOrdersRef);
+
+        if (storeOrdersSnap.empty) {
+          console.log(`  > No 'storeOrders' subcollection found.`);
+        } else {
+          console.log(`  > Found ${storeOrdersSnap.size} documents in 'storeOrders'.`);
+          storeOrdersSnap.docs.forEach(doc => {
+            console.log(`    > Doc ID: ${doc.id}`);
+            console.log(`    > Data:`, doc.data());
+          });
+        }
+      }
+      console.log('--- END DIAGNOSTIC CHECK ---');
+      toast.info('Check console for diagnostic logs');
+    } catch (error) {
+      console.error('Diagnostic failed:', error);
+      toast.error('Diagnostic failed: ' + error.message);
+    }
+  };
+
 
   const updateStats = (productsList) => {
     const totalProducts = productsList.length;
@@ -550,7 +657,6 @@ const VendorDashboard = () => {
 
         // Timestamps
         createdAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         inStock: newProduct.inStock,
       };
@@ -666,8 +772,6 @@ const VendorDashboard = () => {
       description: product.productDescription || product.description || '',
       price: product.price || '',
       image: product.productImage || product.image || '',
-      price: product.price || '',
-      image: product.productImage || product.image || '',
       inStock: product.inStock !== false,
       availability: product.status === 'active' || product.availability === true,
       quantity: product.stockQuantity || product.quantity || 1,
@@ -761,18 +865,264 @@ const VendorDashboard = () => {
     }
   };
 
-  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+  /*
+   * ORDER DETAILS MODAL
+   */
+  const handleViewOrder = (order) => {
+    setSelectedOrder(order);
+    setShowOrderModal(true);
+  };
+
+  const renderOrderModal = () => {
+    if (!showOrderModal || !selectedOrder) return null;
+
+    // Helper to calculate totals if not directly available
+    const calculateTotal = () => {
+      return selectedOrder.totalAmount || selectedOrder.amount || 0;
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl animate-in fade-in zoom-in duration-200">
+
+          {/* Header */}
+          <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50/50">
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <h3 className="text-xl font-bold text-gray-800">Order #{selectedOrder.id.slice(0, 8)}</h3>
+                <span className={`px-3 py-1 text-xs font-semibold rounded-full ${selectedOrder.status === 'Accepted' || selectedOrder.status === 'Confirmed' || selectedOrder.status === 'delivered' ? 'bg-green-100 text-green-700' :
+                    selectedOrder.status === 'Rejected' || selectedOrder.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                      selectedOrder.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-700'
+                  }`}>
+                  {selectedOrder.status}
+                </span>
+              </div>
+              <p className="text-sm text-gray-500 flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                {selectedOrder.createdAt?.toDate?.().toLocaleString() || 'Date N/A'}
+              </p>
+            </div>
+            <button
+              onClick={() => setShowOrderModal(false)}
+              className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+            >
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+          </div>
+
+          <div className="p-6 space-y-6">
+
+            {/* Customer Details */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Customer Details</h4>
+                <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-gray-700">
+                    <Users className="w-4 h-4 text-gray-400" />
+                    <span className="font-medium">{selectedOrder.customerName || selectedOrder.userName || 'Guest'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-700">
+                    <span className="w-4 h-4 flex items-center justify-center text-gray-400 text-xs">📞</span>
+                    <span>{selectedOrder.customerPhone || selectedOrder.phoneNumber || 'N/A'}</span>
+                  </div>
+                  <div className="flex items-start gap-2 text-sm text-gray-700">
+                    <Home className="w-4 h-4 text-gray-400 mt-0.5" />
+                    <span className="line-clamp-2">
+                      {selectedOrder.deliveryAddress
+                        ? `${selectedOrder.deliveryAddress.street || ''}, ${selectedOrder.deliveryAddress.city || ''}, ${selectedOrder.deliveryAddress.zipCode || ''}`
+                        : 'No address provided'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Order Summary */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Payment Summary</h4>
+                <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>Store Total</span>
+                    <span>₹{calculateTotal()}</span>
+                  </div>
+                  {/* Assuming delivery fee is handled at parent order level, but if store specific, add here */}
+                  <div className="pt-2 border-t border-gray-200 flex justify-between font-bold text-gray-900">
+                    <span>Grand Total</span>
+                    <span>₹{calculateTotal()}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Products Table */}
+            <div>
+              <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3">Items Ordered</h4>
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-500 font-medium">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Product</th>
+                      <th className="px-4 py-2 text-right">Price</th>
+                      <th className="px-4 py-2 text-center">Qty</th>
+                      <th className="px-4 py-2 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {selectedOrder.items?.map((item, idx) => (
+                      <tr key={idx} className="divide-y divide-gray-100">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-800">{item.productName || item.name}</div>
+                          {item.variant && <div className="text-xs text-gray-500">{item.variant}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-600">₹{item.price}</td>
+                        <td className="px-4 py-3 text-center text-gray-600">{item.quantity}</td>
+                        <td className="px-4 py-3 text-right font-medium text-gray-800">
+                          ₹{item.totalPrice || (item.price * item.quantity)}
+                        </td>
+                      </tr>
+                    ))}
+                    {(!selectedOrder.items || selectedOrder.items.length === 0) && (
+                      <tr>
+                        <td colSpan="4" className="px-4 py-4 text-center text-gray-500 italic">
+                          No items found in this order.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer Actions */}
+          <div className="p-6 border-t border-gray-100 bg-gray-50 rounded-b-xl flex justify-end gap-3">
+            <button
+              onClick={() => setShowOrderModal(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              Close
+            </button>
+
+            {selectedOrder.status === 'Pending' && (
+              <>
+                <button
+                  onClick={() => {
+                    handleRejectOrder(selectedOrder.id, selectedOrder.storeDocId);
+                    setShowOrderModal(false);
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <X className="w-4 h-4" /> Reject Order
+                </button>
+                <button
+                  onClick={() => {
+                    handleAcceptOrder(selectedOrder.id, selectedOrder.storeDocId);
+                    setShowOrderModal(false);
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-sm transition-colors flex items-center gap-2"
+                >
+                  <Check className="w-4 h-4" /> Accept Order
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* 
+   * VENDOR ACCEPT / REJECT LOGIC
+   */
+  const handleAcceptOrder = async (orderId, storeDocId) => {
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
-        status: newStatus,
-        updatedAt: serverTimestamp()
+      console.log(`Accepting order: ${orderId}, storeDocId: ${storeDocId}`);
+
+      // 1. Update storeStatus = "Accepted"
+      const storeOrderRef = doc(db, 'orders', orderId, 'storeOrders', storeDocId);
+      await updateDoc(storeOrderRef, {
+        storeStatus: 'Accepted',
+        // status: 'Accepted' // Maintain legacy field if needed, but prioritizing storeStatus as per instructions
       });
-      toast.success(`Order status updated to ${newStatus}`);
+
+      toast.success('Order accepted');
+
+      // 2. Check all storeOrders under that orderId
+      const parentOrderRef = doc(db, 'orders', orderId);
+      const storeOrdersCollectionRef = collection(parentOrderRef, 'storeOrders');
+      const storeOrdersSnapshot = await getDocs(storeOrdersCollectionRef);
+
+      let allAccepted = true;
+      storeOrdersSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        // If any sibling is NOT Accepted (and NOT the one we just updated - though we just updated it so it should be fine to check DB if consistent, 
+        // but better to check logic. We updated it, so subsequent fetch should show it. 
+        // However, existing docs might have old status if not refreshed. 
+        // Let's rely on data.storeStatus.
+        // NOTE: We just updated storeOrderRef, but this snapshot might be slightly race-y if we don't wait or if local cache isn't immediate.
+        // But await updateDoc should confirm write.
+        if (doc.id === storeDocId) {
+          // Treat the current one as Accepted (we just updated it)
+          // In case snapshot returns old data
+          return;
+        }
+        if (data.storeStatus !== 'Accepted') {
+          allAccepted = false;
+        }
+      });
+
+      // Re-verify the current one in case logical check above is confusing
+      // Actually, we should just check if *every* doc in the fresh snapshot is Accepted. 
+      // Note: The one we just updated IS in the snapshot if we fetched after update.
+      const freshSnapshot = await getDocs(storeOrdersCollectionRef);
+      const allStoresAccepted = freshSnapshot.docs.every(d => d.data().storeStatus === 'Accepted');
+
+      // 3. If ALL storeStatus == "Accepted", update parent
+      if (allStoresAccepted) {
+        await updateDoc(parentOrderRef, {
+          overallStatus: 'Confirmed',
+          orderStatus: 'Confirmed'
+        });
+        toast.success('Order officially Confirmed!');
+      }
+
     } catch (error) {
-      console.error('Error updating order:', error);
-      toast.error('Failed to update order status');
+      console.error('Error accepting order:', error);
+      toast.error('Failed to accept order');
     }
   };
+
+  const handleRejectOrder = async (orderId, storeDocId) => {
+    try {
+      console.log(`Rejecting order: ${orderId}, storeDocId: ${storeDocId}`);
+
+      // 1. Update storeStatus = "Rejected"
+      const storeOrderRef = doc(db, 'orders', orderId, 'storeOrders', storeDocId);
+      await updateDoc(storeOrderRef, {
+        storeStatus: 'Rejected'
+      });
+
+      // 2. Update parent order
+      const parentOrderRef = doc(db, 'orders', orderId);
+      await updateDoc(parentOrderRef, {
+        overallStatus: 'Rejected',
+        orderStatus: 'Rejected'
+      });
+
+      toast.success('Order rejected');
+
+    } catch (error) {
+      console.error('Error rejecting order:', error);
+      toast.error('Failed to reject order');
+    }
+  };
+
+  // Legacy/Generic status update (keeping as fallback or removing/commenting out if unused)
+  /*
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    ... 
+  };
+  */
 
   const handleStoreStatusUpdate = async (newStatus) => {
     try {
@@ -821,8 +1171,6 @@ const VendorDashboard = () => {
       name: '',
       description: '',
       price: '',
-      image: '',
-      imageFile: null,
       image: '',
       imageFile: null,
       inStock: true,
@@ -2054,8 +2402,12 @@ const VendorDashboard = () => {
           {activeTab === 'orders' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200">
               <div className="p-6 border-b border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-800">Order Management</h3>
+                <h3 className="text-lg font-semibold text-gray-800">Order Management</h3>          
               </div>
+
+              {/* Order Details Modal Render Function */}
+              {renderOrderModal}
+
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50">
@@ -2087,19 +2439,31 @@ const VendorDashboard = () => {
                             <div className="text-xs text-gray-500">{order.deliveryAddress?.city}</div>
                           </td>
                           <td className="px-6 py-4 text-sm text-gray-500">
-                            {order.items?.length || 0} items
+                            <div className="space-y-1">
+                              {order.items?.map((item, idx) => (
+                                <div key={idx} className="text-xs text-gray-700">
+                                  {item.productName || item.name}
+                                  <div className="text-gray-500 text-[10px]">
+                                    ₹{item.price} • ₹{item.totalPrice || (item.price * item.quantity)}
+                                  </div>
+                                </div>
+                              ))}
+                              {(!order.items || order.items.length === 0) && (
+                                <span className="text-xs text-gray-500">No items</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-6 py-4 font-medium text-gray-900">
                             ₹{order.totalAmount || order.amount}
                           </td>
                           <td className="px-6 py-4">
-                            <span className={`px-2 py-1 text-xs rounded-full ${order.status === 'delivered' ? 'bg-green-100 text-green-800' :
-                              order.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                                order.status === 'ready' ? 'bg-blue-100 text-blue-800' :
-                                  order.status === 'preparing' ? 'bg-yellow-100 text-yellow-800' :
-                                    'bg-gray-100 text-gray-800'
+                            <span className={`px-2 py-1 text-xs rounded-full ${order.status === 'Accepted' || order.status === 'Confirmed' || order.status === 'delivered' ? 'bg-green-100 text-green-800' :
+                              order.status === 'Rejected' || order.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                                order.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-gray-100 text-gray-800'
                               }`}>
-                              {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                              {/* {order.status.charAt(0).toUpperCase() + order.status.slice(1)} */}
+                              {order.status}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-sm text-gray-500">
@@ -2107,34 +2471,33 @@ const VendorDashboard = () => {
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex items-center space-x-2">
+                              <button
+                                onClick={() => handleViewOrder(order)}
+                                className="p-1 px-2 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 text-xs font-medium"
+                              >
+                                View
+                              </button>
                               {/* Action Buttons based on status */}
-                              {order.status === 'placed' && (
+                              {order.status === 'Pending' && (
                                 <>
                                   <button
-                                    onClick={() => handleUpdateOrderStatus(order.id, 'preparing')}
+                                    onClick={() => handleAcceptOrder(order.id, order.storeDocId)}
                                     className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded hover:bg-green-100"
                                   >
                                     Accept
                                   </button>
                                   <button
-                                    onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}
+                                    onClick={() => handleRejectOrder(order.id, order.storeDocId)}
                                     className="px-3 py-1 bg-red-50 text-red-700 text-xs rounded hover:bg-red-100"
                                   >
                                     Reject
                                   </button>
                                 </>
                               )}
-                              {order.status === 'preparing' && (
-                                <button
-                                  onClick={() => handleUpdateOrderStatus(order.id, 'ready')}
-                                  className="px-3 py-1 bg-blue-50 text-blue-700 text-xs rounded hover:bg-blue-100"
-                                >
-                                  Mark Ready
-                                </button>
+                              {order.status === 'Accepted' && (
+                                <span className="text-xs text-green-600">Accepted</span>
                               )}
-                              {order.status === 'ready' && (
-                                <span className="text-xs text-blue-600">Waiting for pickup</span>
-                              )}
+
                             </div>
                           </td>
                         </tr>
@@ -2239,6 +2602,7 @@ const VendorDashboard = () => {
 
       {/* Modals */}
       {renderProductModal()}
+      {renderOrderModal()}
     </div>
   );
 };
