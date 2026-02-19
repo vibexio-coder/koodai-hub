@@ -889,11 +889,11 @@ const VendorDashboard = () => {
           <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50/50">
             <div>
               <div className="flex items-center gap-3 mb-1">
-                <h3 className="text-xl font-bold text-gray-800">Order #{selectedOrder.id.slice(0, 8)}</h3>
+                <h3 className="text-xl font-bold text-gray-800">Order {selectedOrder.orderId ? `#${selectedOrder.orderId}` : `#${selectedOrder.id.slice(0, 8)}`}</h3>
                 <span className={`px-3 py-1 text-xs font-semibold rounded-full ${selectedOrder.status === 'Accepted' || selectedOrder.status === 'Confirmed' || selectedOrder.status === 'delivered' ? 'bg-green-100 text-green-700' :
-                    selectedOrder.status === 'Rejected' || selectedOrder.status === 'cancelled' ? 'bg-red-100 text-red-700' :
-                      selectedOrder.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-gray-100 text-gray-700'
+                  selectedOrder.status === 'Rejected' || selectedOrder.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                    selectedOrder.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-gray-100 text-gray-700'
                   }`}>
                   {selectedOrder.status}
                 </span>
@@ -2402,7 +2402,7 @@ const VendorDashboard = () => {
           {activeTab === 'orders' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200">
               <div className="p-6 border-b border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-800">Order Management</h3>          
+                <h3 className="text-lg font-semibold text-gray-800">Order Management</h3>
               </div>
 
               {/* Order Details Modal Render Function */}
@@ -2432,7 +2432,7 @@ const VendorDashboard = () => {
                       orders.map((order) => (
                         <tr key={order.id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 font-medium text-gray-900">
-                            #{order.id.slice(0, 8)}
+                            {order.orderId ? `#${order.orderId}` : `#${order.id.slice(0, 8)}`}
                           </td>
                           <td className="px-6 py-4 text-sm text-gray-900">
                             {order.customerName || order.userName || 'Guest'}

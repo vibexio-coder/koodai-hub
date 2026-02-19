@@ -14,7 +14,7 @@ import RecentOrders from '../../components/admin/RecentOrders';
 import QuickActions from '../../components/admin/QuickActions';
 import VendorsSection from '../../components/admin/VendorsSection';
 import PartnersSection from '../../components/admin/PartnersSection';
-import OrdersSection from '../../components/admin/OrdersSection';
+import OrderManagement from '../../components/admin/OrderManagement';
 import CategoriesSection from '../../components/admin/CategoriesSection';
 import PaymentsSection from '../../components/admin/PaymentsSection';
 import PlaceholderSection from '../../components/admin/PlaceholderSection';
@@ -891,9 +891,9 @@ const Dashboard = () => {
           )}
 
           {activeTab === 'orders' && (
-            <OrdersSection
-              recentOrders={recentOrders}
+            <OrderManagement
               handleViewOrderDetails={handleViewOrderDetails}
+              allVendors={allVendors}
             />
           )}
 
