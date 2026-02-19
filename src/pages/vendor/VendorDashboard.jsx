@@ -129,6 +129,7 @@ const VendorDashboard = () => {
   // Order Details Modal State
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
+  const [filterStatus, setFilterStatus] = useState('All Status');
 
   // Add/Edit Product Modal
   const [showProductModal, setShowProductModal] = useState(false);
@@ -331,8 +332,7 @@ const VendorDashboard = () => {
     // collectionGroup query to find all storeOrders for this vendor where status is Pending
     const q = query(
       collectionGroup(db, 'storeOrders'),
-      where('storeOwnerId', '==', vendorUID),
-      where('storeStatus', '==', 'Pending')
+      where('storeOwnerId', '==', vendorUID)
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -2401,8 +2401,31 @@ const VendorDashboard = () => {
           {/* OTHER TABS */}
           {activeTab === 'orders' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-800">Order Management</h3>          
+              <div className="p-6 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <h3 className="text-lg font-semibold text-gray-800">Order Management</h3>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Filter className="h-4 w-4 text-gray-500" />
+                  </div>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="appearance-none bg-white border border-gray-300 text-gray-700 py-2 pl-10 pr-8 rounded-lg leading-tight focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent text-sm font-medium"
+                  >
+                    <option value="All Status">All Status</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Accepted">Accepted</option>
+                    <option value="Preparing">Preparing</option>
+                    <option value="Ready">Ready</option>
+                    <option value="Out for Delivery">Out for Delivery</option>
+                    <option value="Delivered">Delivered</option>
+                    <option value="Cancelled">Cancelled</option>
+                    <option value="Rejected">Rejected</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                    <ChevronDown className="h-4 w-4" />
+                  </div>
+                </div>
               </div>
 
               {/* Order Details Modal Render Function */}
@@ -2422,14 +2445,25 @@ const VendorDashboard = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {orders.length === 0 ? (
+                    {orders.filter(order => {
+                      if (filterStatus === 'All Status') return true;
+                      // Handle case discrepancies
+                      const s = order.status?.toLowerCase() || '';
+                      const f = filterStatus.toLowerCase();
+                      return s === f;
+                    }).length === 0 ? (
                       <tr>
                         <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
                           No orders found
                         </td>
                       </tr>
                     ) : (
-                      orders.map((order) => (
+                      orders.filter(order => {
+                        if (filterStatus === 'All Status') return true;
+                        const s = order.status?.toLowerCase() || '';
+                        const f = filterStatus.toLowerCase();
+                        return s === f;
+                      }).map((order) => (
                         <tr key={order.id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 font-medium text-gray-900">
                             #{order.id.slice(0, 8)}
