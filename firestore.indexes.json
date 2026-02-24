@@ -1,0 +1,15 @@
+{
+    "indexes": [
+        {
+            "collectionGroup": "storeOrders",
+            "queryScope": "COLLECTION_GROUP",
+            "fields": [
+                {
+                    "fieldPath": "storeOwnerId",
+                    "order": "ASCENDING"
+                }
+            ]
+        }
+    ],
+    "fieldOverrides": []
+}

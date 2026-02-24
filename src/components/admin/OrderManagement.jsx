@@ -17,7 +17,8 @@ import {
     orderBy,
     onSnapshot,
     getDocs,
-    doc
+    doc,
+    collectionGroup
 } from 'firebase/firestore';
 
 const OrderManagement = ({ handleViewOrderDetails, allVendors }) => {
@@ -28,132 +29,179 @@ const OrderManagement = ({ handleViewOrderDetails, allVendors }) => {
     const [storeFilter, setStoreFilter] = useState('all');
     const [filteredOrders, setFilteredOrders] = useState([]);
 
-    // Fetch orders from 'orders' collection and expand 'storeOrders'
+    // Fetch orders using dual-stream strategy
     useEffect(() => {
         setLoading(true);
-        // Listen to parent 'orders' collection to ensure we catch all orders (including legacy)
-        const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
 
-        const unsubscribe = onSnapshot(q, async (snapshot) => {
-            try {
-                const orderPromises = snapshot.docs.map(async (orderDoc) => {
-                    const orderData = orderDoc.data();
+        // 1. Fetch all storeOrders (Vendor Orders) - robust source of truth for vendor items
+        const storeOrdersQuery = query(collectionGroup(db, 'storeOrders'));
 
-                    // Fetch sub-collection 'storeOrders'
-                    // This handles the Multi-Vendor case
-                    let subOrders = [];
-                    try {
-                        const subOrdersSnap = await getDocs(collection(orderDoc.ref, 'storeOrders'));
-                        if (!subOrdersSnap.empty) {
-                            subOrders = subOrdersSnap.docs.map(subDoc => ({
-                                id: subDoc.id,
-                                ...subDoc.data(),
-                                ref: subDoc.ref
-                            }));
-                        }
-                    } catch (e) {
-                        console.error(`Error fetching storeOrders for ${orderDoc.id}`, e);
-                    }
+        // 2. Fetch all parent orders - for customer info & legacy support
+        const parentOrdersQuery = query(collection(db, 'orders'));
 
-                    // If we have sub-orders, return them as individual rows
-                    if (subOrders.length > 0) {
-                        return subOrders.map(storeOrder => ({
-                            id: storeOrder.id,
-                            parentId: orderDoc.id,
-                            uniqueId: `${orderDoc.id}_${storeOrder.id}`,
-                            orderId: storeOrder.orderId || orderData.orderId || orderDoc.id, // Prioritize explicit orderId
+        // Use onSnapshot for real-time updates on both
+        const unsubscribeStore = onSnapshot(storeOrdersQuery, (storeSnap) => {
+            const storeDocs = storeSnap.docs;
 
-                            // Store Order Specifics
-                            storeId: storeOrder.storeId,
-                            storeName: storeOrder.storeName || 'Unknown Store',
-                            storeImage: storeOrder.storeImage,
-                            vendorId: storeOrder.storeOwnerId,
-                            amount: storeOrder.storeTotal || 0,
-                            status: storeOrder.storeStatus || 'Pending',
-                            items: storeOrder.items || [],
-
-                            // Parent Order Details
-                            customerId: orderData.userId,
-                            userName: orderData.userName || orderData.customerName || 'N/A',
-                            userPhone: orderData.userPhone || orderData.customerPhone || 'N/A',
-                            userAddress: orderData.userAddress,
-                            paymentMethod: orderData.paymentMethod || 'N/A',
-                            createdAt: storeOrder.createdAt || orderData.createdAt,
-
-                            // For Details Modal
-                            vendorName: storeOrder.storeName || 'Unknown Store',
-                            vendorAddress: storeOrder.storeAddress || '',
-
-                            totalAmount: storeOrder.storeTotal || 0,
-                            subtotal: storeOrder.storeSubtotal || 0,
-                            deliveryFee: storeOrder.storeDeliveryFee || 0,
-                            tax: storeOrder.storeTax || 0,
-
-                            // Raw Data
-                            ...storeOrder,
-                            parentOrder: orderData
-                        }));
-                    } else {
-                        // Fallback: Return Main Order as a single row (Legacy/Single Vendor)
-                        // This ensures orders without 'storeOrders' subcollection still show up
-                        return [{
-                            id: orderDoc.id, // Use Order ID as ID
-                            parentId: orderDoc.id,
-                            uniqueId: orderDoc.id,
-                            orderId: orderData.orderId || orderDoc.id, // Map explicit orderId
-
-                            // Map Main Order logic to Table Columns
-                            storeId: orderData.restaurantId || 'N/A', // Legacy field?
-                            storeName: orderData.vendorName || orderData.businessName || 'Single Store',
-                            vendorId: orderData.vendorId, // Legacy field?
-                            amount: orderData.totalAmount || orderData.amount || 0,
-                            status: orderData.status || 'Pending',
-                            items: orderData.items || [],
-
-                            // Customer
-                            customerId: orderData.userId,
-                            userName: orderData.userName || orderData.customerName || 'N/A',
-                            userPhone: orderData.userPhone || orderData.customerPhone || 'N/A',
-                            userAddress: orderData.userAddress,
-                            paymentMethod: orderData.paymentMethod || 'N/A',
-                            createdAt: orderData.createdAt,
-
-                            // For Details Modal
-                            vendorName: orderData.vendorName || orderData.businessName || 'Single Store',
-                            vendorAddress: orderData.vendorAddress || '',
-
-                            totalAmount: orderData.totalAmount || orderData.amount || 0,
-                            subtotal: orderData.subtotal || 0,
-                            deliveryFee: orderData.deliveryFee || 0,
-                            tax: orderData.tax || 0,
-
-                            // Raw Data
-                            ...orderData,
-                            parentOrder: orderData
-                        }];
-                    }
-                });
-
-                const resolved = await Promise.all(orderPromises);
-                // Flatten array of arrays
-                const allRows = resolved.flat().filter(o => o !== null);
-
-                // Sort by CreatedAt Desc
-                allRows.sort((a, b) => {
-                    const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-                    const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
-                    return dateB - dateA;
-                });
-
-                setOrders(allRows);
-                setLoading(false);
-            } catch (error) {
-                console.error("Error processing orders snapshot:", error);
-                setLoading(false);
-            }
+            // Nested listener for parents isn't ideal for perf, but ensuring we have up-to-date parents is key.
+            // Better: Listen to both independently and merge in state or a reducer.
+            // For simplicity/stability: We'll fetch parents once or listen to them too.
+            // Let's listen to parents as well.
         });
 
-        return () => unsubscribe();
+        const unsubscribeParent = onSnapshot(parentOrdersQuery, (parentSnap) => {
+            // trigger merge
+        });
+
+        // Actually, managing two async streams merging into one state can be tricky with race conditions.
+        // Let's try a simpler approach: 
+        // We'll define a function that processes both snapshots when they update.
+        // But `onSnapshot` is event-driven.
+
+        // Revised Approach:
+        // Use a single variable to hold the unsubscribe for the combined logic? No.
+        // Let's use two unsusbcribes.
+
+        let storeDocsCache = [];
+        let parentDocsCache = new Map();
+        let isStoreLoaded = false;
+        let isParentLoaded = false;
+
+        const mergeAndSetOrders = () => {
+            if (!isStoreLoaded || !isParentLoaded) return;
+
+            const allRows = [];
+            const handledParentIds = new Set();
+
+            // 1. Process Store Orders
+            storeDocsCache.forEach(storeDoc => {
+                const storeData = storeDoc.data();
+                // Valid storeOrder?
+                if (!storeData) return;
+
+                const parentId = storeDoc.ref.parent.parent ? storeDoc.ref.parent.parent.id : null;
+                const parentOrder = (parentId && parentDocsCache.get(parentId)) || {};
+
+                if (parentId) handledParentIds.add(parentId);
+
+                allRows.push({
+                    id: storeDoc.id,
+                    parentId: parentId || 'orphan',
+                    uniqueId: `${parentId || 'orphan'}_${storeDoc.id}`,
+                    orderId: storeData.orderId || parentOrder.orderId || parentId,
+
+                    // Store Order Specifics
+                    storeId: storeData.storeId,
+                    storeName: storeData.storeName || 'Unknown Store',
+                    storeImage: storeData.storeImage,
+                    vendorId: storeData.storeOwnerId,
+                    amount: storeData.storeTotal || 0,
+                    status: storeData.storeStatus || 'Pending',
+                    items: storeData.items || [],
+
+                    // Parent Order Details (Fallback to 'N/A' if parent missing)
+                    customerId: parentOrder.userId,
+                    userName: parentOrder.userName || parentOrder.customerName || 'N/A',
+                    userPhone: parentOrder.userPhone || parentOrder.customerPhone || 'N/A',
+                    userAddress: parentOrder.userAddress,
+                    paymentMethod: parentOrder.paymentMethod || 'N/A',
+                    createdAt: storeData.createdAt || parentOrder.createdAt,
+
+                    // For Details Modal
+                    vendorName: storeData.storeName || 'Unknown Store',
+                    vendorAddress: storeData.storeAddress || '',
+
+                    totalAmount: storeData.storeTotal || 0,
+                    subtotal: storeData.storeSubtotal || 0,
+                    deliveryFee: storeData.storeDeliveryFee || 0,
+                    tax: storeData.storeTax || 0,
+
+                    // Raw Data
+                    ...storeData,
+                    parentOrder: parentOrder
+                });
+            });
+
+            // 2. Process Legacy Orders (Parents with no mapped storeOrders)
+            parentDocsCache.forEach((parentOrder, parentId) => {
+                if (!handledParentIds.has(parentId)) {
+                    // This indicates either:
+                    // a) It's a legacy order with no sub-collection
+                    // b) It's a new order but storeOrders haven't synced/created yet
+
+                    // We include it as a "Single Store" order
+                    allRows.push({
+                        id: parentId,
+                        parentId: parentId,
+                        uniqueId: parentId,
+                        orderId: parentOrder.orderId || parentId,
+
+                        storeId: parentOrder.restaurantId || 'N/A',
+                        storeName: parentOrder.vendorName || parentOrder.businessName || 'Single Store',
+                        vendorId: parentOrder.vendorId,
+                        amount: parentOrder.totalAmount || parentOrder.amount || 0,
+                        status: parentOrder.overallStatus || parentOrder.orderStatus || parentOrder.status || 'Pending',
+                        items: parentOrder.items || [],
+
+                        customerId: parentOrder.userId,
+                        userName: parentOrder.userName || parentOrder.customerName || 'N/A',
+                        userPhone: parentOrder.userPhone || parentOrder.customerPhone || 'N/A',
+                        userAddress: parentOrder.userAddress,
+                        paymentMethod: parentOrder.paymentMethod || 'N/A',
+                        createdAt: parentOrder.createdAt,
+
+                        vendorName: parentOrder.vendorName || parentOrder.businessName || 'Single Store',
+                        vendorAddress: parentOrder.vendorAddress || '',
+
+                        totalAmount: parentOrder.totalAmount || parentOrder.amount || 0,
+                        subtotal: parentOrder.subtotal || 0,
+                        deliveryFee: parentOrder.deliveryFee || 0,
+                        tax: parentOrder.tax || 0,
+
+                        ...parentOrder,
+                        parentOrder: parentOrder
+                    });
+                }
+            });
+
+            // Sort
+            allRows.sort((a, b) => {
+                const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+                const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+                return dateB - dateA;
+            });
+
+            setOrders(allRows);
+            setLoading(false);
+        };
+
+        const u1 = onSnapshot(storeOrdersQuery, (snap) => {
+            storeDocsCache = snap.docs;
+            isStoreLoaded = true;
+            mergeAndSetOrders();
+        }, (error) => {
+            console.error("Error fetching storeOrders:", error);
+            // Don't block if one fails, maybe? But for now proceed.
+            isStoreLoaded = true; // Pretend loaded to unblock
+            mergeAndSetOrders();
+        });
+
+        const u2 = onSnapshot(parentOrdersQuery, (snap) => {
+            const map = new Map();
+            snap.docs.forEach(doc => map.set(doc.id, doc.data()));
+            parentDocsCache = map;
+            isParentLoaded = true;
+            mergeAndSetOrders();
+        }, (error) => {
+            console.error("Error fetching parent orders:", error);
+            isParentLoaded = true;
+            mergeAndSetOrders();
+        });
+
+        return () => {
+            u1();
+            u2();
+        };
     }, []);
 
     // Filter Logic

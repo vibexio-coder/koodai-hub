@@ -379,16 +379,31 @@ const VendorDashboard = () => {
             ...doc.data()
           }));
 
+          // --- DELIVERY AUTO-SYNC ---
+          // If delivery partner has delivered, vendor panel auto-updates storeStatus
+          // (Separation of responsibility: delivery only writes delivery.status)
+          if (
+            storeOrderData.delivery?.status === 'delivered' &&
+            storeOrderData.storeStatus !== 'Delivered'
+          ) {
+            updateDoc(storeOrderDoc.ref, { storeStatus: 'Delivered' }).catch(console.error);
+          }
+
           // Combine parent order data with store-specific data
+          const isCancelled = orderData.orderStatus === 'Cancelled' || orderData.status === 'Cancelled';
+          const status = isCancelled ? 'Cancelled' : (storeOrderData.storeStatus || 'Pending');
+
           return {
-            id: orderRef.id, // Main Order ID
-            ...orderData, // Customer info, delivery address etc
-            // Store specific details overrides
+            id: orderRef.id,
+            ...orderData,
             totalAmount: storeOrderData.storeTotal || 0,
-            status: storeOrderData.storeStatus || 'Pending', // Should be 'Pending' based on query
+            status: status,
+            delivery: storeOrderData.delivery || null, // Pass delivery object through
             items: productsData,
             storeOrderId: storeOrderDoc.id,
-            storeDocId: storeOrderDoc.id // Alias for clarity
+            storeDocId: storeOrderDoc.id,
+            storeOrderPath: storeOrderDoc.ref.path,
+            parentOrderPath: orderRef.path
           };
         });
 
@@ -891,10 +906,11 @@ const VendorDashboard = () => {
             <div>
               <div className="flex items-center gap-3 mb-1">
                 <h3 className="text-xl font-bold text-gray-800">Order {selectedOrder.orderId ? `#${selectedOrder.orderId}` : `#${selectedOrder.id.slice(0, 8)}`}</h3>
-                <span className={`px-3 py-1 text-xs font-semibold rounded-full ${selectedOrder.status === 'Accepted' || selectedOrder.status === 'Confirmed' || selectedOrder.status === 'delivered' ? 'bg-green-100 text-green-700' :
-                  selectedOrder.status === 'Rejected' || selectedOrder.status === 'cancelled' ? 'bg-red-100 text-red-700' :
-                    selectedOrder.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-gray-100 text-gray-700'
+                <span className={`px-3 py-1 text-xs font-semibold rounded-full ${['Accepted', 'Confirmed', 'Delivered', 'Out for Delivery'].includes(selectedOrder.status) ? 'bg-green-100 text-green-700' :
+                  ['Rejected', 'Cancelled'].includes(selectedOrder.status) ? 'bg-red-100 text-red-700' :
+                    selectedOrder.status === 'Preparing' ? 'bg-blue-100 text-blue-700' :
+                      selectedOrder.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-700'
                   }`}>
                   {selectedOrder.status}
                 </span>
@@ -1008,7 +1024,7 @@ const VendorDashboard = () => {
               <>
                 <button
                   onClick={() => {
-                    handleRejectOrder(selectedOrder.id, selectedOrder.storeDocId);
+                    handleRejectOrder(selectedOrder.id, selectedOrder.storeDocId, selectedOrder.storeOrderPath, selectedOrder.parentOrderPath);
                     setShowOrderModal(false);
                   }}
                   className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors flex items-center gap-2"
@@ -1017,7 +1033,7 @@ const VendorDashboard = () => {
                 </button>
                 <button
                   onClick={() => {
-                    handleAcceptOrder(selectedOrder.id, selectedOrder.storeDocId);
+                    handleAcceptOrder(selectedOrder.id, selectedOrder.storeDocId, selectedOrder.storeOrderPath, selectedOrder.parentOrderPath);
                     setShowOrderModal(false);
                   }}
                   className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-sm transition-colors flex items-center gap-2"
@@ -1026,6 +1042,18 @@ const VendorDashboard = () => {
                 </button>
               </>
             )}
+
+            {selectedOrder.status === 'Preparing' && (
+              <button
+                onClick={() => {
+                  handleReadyOrder(selectedOrder.id, selectedOrder.storeDocId, selectedOrder.storeOrderPath);
+                  setShowOrderModal(false);
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors flex items-center gap-2"
+              >
+                <Package className="w-4 h-4" /> Mark Ready for Delivery
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1033,78 +1061,96 @@ const VendorDashboard = () => {
   };
 
   /* 
-   * VENDOR ACCEPT / REJECT LOGIC
+  /*
+  /*
+  /*
+   * VENDOR STATUS LOGIC
    */
-  const handleAcceptOrder = async (orderId, storeDocId) => {
+
+  // 1. Pending -> Preparing + Assign Delivery Partner
+  const handleAcceptOrder = async (orderId, storeDocId, storeOrderPath, parentOrderPath) => {
     try {
-      console.log(`Accepting order: ${orderId}, storeDocId: ${storeDocId}`);
-
-      // 1. Update storeStatus = "Accepted"
-      const storeOrderRef = doc(db, 'orders', orderId, 'storeOrders', storeDocId);
-      await updateDoc(storeOrderRef, {
-        storeStatus: 'Accepted',
-        // status: 'Accepted' // Maintain legacy field if needed, but prioritizing storeStatus as per instructions
-      });
-
-      toast.success('Order accepted');
-
-      // 2. Check all storeOrders under that orderId
-      const parentOrderRef = doc(db, 'orders', orderId);
-      const storeOrdersCollectionRef = collection(parentOrderRef, 'storeOrders');
-      const storeOrdersSnapshot = await getDocs(storeOrdersCollectionRef);
-
-      let allAccepted = true;
-      storeOrdersSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        // If any sibling is NOT Accepted (and NOT the one we just updated - though we just updated it so it should be fine to check DB if consistent, 
-        // but better to check logic. We updated it, so subsequent fetch should show it. 
-        // However, existing docs might have old status if not refreshed. 
-        // Let's rely on data.storeStatus.
-        // NOTE: We just updated storeOrderRef, but this snapshot might be slightly race-y if we don't wait or if local cache isn't immediate.
-        // But await updateDoc should confirm write.
-        if (doc.id === storeDocId) {
-          // Treat the current one as Accepted (we just updated it)
-          // In case snapshot returns old data
-          return;
-        }
-        if (data.storeStatus !== 'Accepted') {
-          allAccepted = false;
-        }
-      });
-
-      // Re-verify the current one in case logical check above is confusing
-      // Actually, we should just check if *every* doc in the fresh snapshot is Accepted. 
-      // Note: The one we just updated IS in the snapshot if we fetched after update.
-      const freshSnapshot = await getDocs(storeOrdersCollectionRef);
-      const allStoresAccepted = freshSnapshot.docs.every(d => d.data().storeStatus === 'Accepted');
-
-      // 3. If ALL storeStatus == "Accepted", update parent
-      if (allStoresAccepted) {
-        await updateDoc(parentOrderRef, {
-          overallStatus: 'Confirmed',
-          orderStatus: 'Confirmed'
-        });
-        toast.success('Order officially Confirmed!');
+      if (!orderId || !storeDocId) {
+        throw new Error(`Missing IDs: orderId=${orderId}, storeDocId=${storeDocId}`);
       }
+
+      const storeOrderRef = storeOrderPath
+        ? doc(db, storeOrderPath)
+        : doc(db, 'orders', orderId, 'storeOrders', storeDocId);
+
+      // Update storeStatus + assign delivery partner (hardcoded Sam for testing)
+      await updateDoc(storeOrderRef, {
+        storeStatus: 'Preparing',
+        delivery: {
+          partnerId: 'CHE-DP-0002',
+          partnerName: 'Sam',
+          assignedAt: serverTimestamp(),
+          status: 'pending_acceptance'
+        }
+      });
+
+      // Update parent order status
+      const parentOrderRef = parentOrderPath
+        ? doc(db, parentOrderPath)
+        : doc(db, 'orders', orderId);
+
+      await updateDoc(parentOrderRef, {
+        overallStatus: 'Confirmed',
+        orderStatus: 'Confirmed'
+      });
+
+      toast.success('Order accepted! Delivery partner Sam has been notified.');
 
     } catch (error) {
       console.error('Error accepting order:', error);
-      toast.error('Failed to accept order');
+      toast.error(`Failed to accept order: ${error.message || error.code}`);
     }
   };
 
-  const handleRejectOrder = async (orderId, storeDocId) => {
+  // 2. Preparing -> Out for Delivery (Ready Button)
+  const handleReadyOrder = async (orderId, storeDocId, storeOrderPath) => {
     try {
-      console.log(`Rejecting order: ${orderId}, storeDocId: ${storeDocId}`);
+      if (!orderId || !storeDocId) {
+        throw new Error(`Missing IDs`);
+      }
+
+      const storeOrderRef = storeOrderPath
+        ? doc(db, storeOrderPath)
+        : doc(db, 'orders', orderId, 'storeOrders', storeDocId);
+
+      await updateDoc(storeOrderRef, {
+        storeStatus: 'Out for Delivery',
+      });
+
+      toast.success('Order marked as Ready! Status changed to Out for Delivery.');
+
+    } catch (error) {
+      console.error('Error marking order ready:', error);
+      toast.error('Failed to update order status');
+    }
+  };
+
+  const handleRejectOrder = async (orderId, storeDocId, storeOrderPath, parentOrderPath) => {
+    try {
+      if (!orderId || !storeDocId) {
+        throw new Error(`Missing IDs: orderId=${orderId}, storeDocId=${storeDocId}`);
+      }
+      console.log(`Rejecting order: ${orderId}, storeDocId: ${storeDocId}, path: ${storeOrderPath}, parentPath: ${parentOrderPath}`);
 
       // 1. Update storeStatus = "Rejected"
-      const storeOrderRef = doc(db, 'orders', orderId, 'storeOrders', storeDocId);
+      const storeOrderRef = storeOrderPath
+        ? doc(db, storeOrderPath)
+        : doc(db, 'orders', orderId, 'storeOrders', storeDocId);
+
       await updateDoc(storeOrderRef, {
         storeStatus: 'Rejected'
       });
 
       // 2. Update parent order
-      const parentOrderRef = doc(db, 'orders', orderId);
+      const parentOrderRef = parentOrderPath
+        ? doc(db, parentOrderPath)
+        : doc(db, 'orders', orderId);
+
       await updateDoc(parentOrderRef, {
         overallStatus: 'Rejected',
         orderStatus: 'Rejected'
@@ -1114,14 +1160,14 @@ const VendorDashboard = () => {
 
     } catch (error) {
       console.error('Error rejecting order:', error);
-      toast.error('Failed to reject order');
+      toast.error(`Failed to reject order: ${error.message || error.code}`);
     }
   };
 
   // Legacy/Generic status update (keeping as fallback or removing/commenting out if unused)
   /*
   const handleUpdateOrderStatus = async (orderId, newStatus) => {
-    ... 
+    ...
   };
   */
 
@@ -2447,7 +2493,7 @@ const VendorDashboard = () => {
               </div>
 
               {/* Order Details Modal Render Function */}
-              {renderOrderModal}
+              {renderOrderModal()}
 
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -2532,48 +2578,77 @@ const VendorDashboard = () => {
                             ₹{order.totalAmount || order.amount}
                           </td>
                           <td className="px-6 py-4">
-                            <span className={`px-2 py-1 text-xs rounded-full ${order.status === 'Accepted' || order.status === 'Confirmed' || order.status === 'delivered' ? 'bg-green-100 text-green-800' :
-                              order.status === 'Rejected' || order.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                                order.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-gray-100 text-gray-800'
-                              }`}>
-                              {/* {order.status.charAt(0).toUpperCase() + order.status.slice(1)} */}
-                              {order.status}
-                            </span>
+                            <div className="flex flex-col gap-1">
+                              <span className={`px-2 py-1 text-xs rounded-full w-fit ${['Accepted', 'Confirmed', 'Delivered'].includes(order.status) ? 'bg-green-100 text-green-800' :
+                                ['Rejected', 'Cancelled'].includes(order.status) ? 'bg-red-100 text-red-800' :
+                                  order.status === 'Preparing' ? 'bg-blue-100 text-blue-800' :
+                                    order.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+                                      'bg-gray-100 text-gray-800'
+                                }`}>
+                                {order.status}
+                              </span>
+                              {/* Delivery partner status badge */}
+                              {order.delivery && (
+                                <span className={`px-2 py-1 text-xs rounded-full w-fit ${order.delivery.status === 'pending_acceptance' ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' :
+                                  order.delivery.status === 'accepted' ? 'bg-green-50 text-green-700 border border-green-200' :
+                                    order.delivery.status === 'declined' ? 'bg-red-50 text-red-700 border border-red-200' :
+                                      order.delivery.status === 'picked_up' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                                        order.delivery.status === 'delivered' ? 'bg-green-50 text-green-700 border border-green-200' :
+                                          'bg-gray-50 text-gray-600 border border-gray-200'
+                                  }`}>
+                                  {order.delivery.status === 'pending_acceptance' && '🟡 Awaiting Sam'}
+                                  {order.delivery.status === 'accepted' && '🟢 Sam Accepted'}
+                                  {order.delivery.status === 'declined' && '🔴 Sam Declined'}
+                                  {order.delivery.status === 'picked_up' && '🚚 Out for Delivery'}
+                                  {order.delivery.status === 'delivered' && '✅ Delivered'}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-6 py-4 text-sm text-gray-500">
                             {order.createdAt?.toDate?.().toLocaleDateString()}
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex items-center space-x-2">
-                              <button
-                                onClick={() => handleViewOrder(order)}
-                                className="p-1 px-2 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 text-xs font-medium"
-                              >
-                                View
-                              </button>
-                              {/* Action Buttons based on status */}
-                              {order.status === 'Pending' && (
-                                <>
-                                  <button
-                                    onClick={() => handleAcceptOrder(order.id, order.storeDocId)}
-                                    className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded hover:bg-green-100"
-                                  >
-                                    Accept
-                                  </button>
-                                  <button
-                                    onClick={() => handleRejectOrder(order.id, order.storeDocId)}
-                                    className="px-3 py-1 bg-red-50 text-red-700 text-xs rounded hover:bg-red-100"
-                                  >
-                                    Reject
-                                  </button>
-                                </>
-                              )}
-                              {order.status === 'Accepted' && (
-                                <span className="text-xs text-green-600">Accepted</span>
-                              )}
+                            <button
+                              onClick={() => handleViewOrder(order)}
+                              className="p-1 px-2 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 text-xs font-medium"
+                            >
+                              View
+                            </button>
+                            {/* Action Buttons based on status */}
+                            {order.status === 'Pending' && (
+                              <>
+                                <button
+                                  onClick={() => handleAcceptOrder(order.id, order.storeDocId, order.storeOrderPath, order.parentOrderPath)}
+                                  className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded hover:bg-green-100"
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  onClick={() => handleRejectOrder(order.id, order.storeDocId, order.storeOrderPath, order.parentOrderPath)}
+                                  className="px-3 py-1 bg-red-50 text-red-700 text-xs rounded hover:bg-red-100"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
 
-                            </div>
+                            {order.status === 'Preparing' && order.delivery?.status !== 'declined' && (
+                              <button
+                                onClick={() => handleReadyOrder(order.id, order.storeDocId, order.storeOrderPath)}
+                                className="px-3 py-1 bg-blue-50 text-blue-700 text-xs rounded hover:bg-blue-100 flex items-center gap-1"
+                              >
+                                Ready
+                              </button>
+                            )}
+
+                            {order.status === 'Out for Delivery' && (
+                              <span className="text-xs text-purple-600 font-medium">Out for Delivery</span>
+                            )}
+
+                            {order.status === 'Delivered' && (
+                              <span className="text-xs text-green-600 font-medium">Delivered</span>
+                            )}
                           </td>
                         </tr>
                       ))
@@ -2673,12 +2748,12 @@ const VendorDashboard = () => {
             </div>
           )}
         </main>
-      </div>
+      </div >
 
       {/* Modals */}
       {renderProductModal()}
       {renderOrderModal()}
-    </div>
+    </div >
   );
 };
 

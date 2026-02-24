@@ -338,7 +338,7 @@ const Dashboard = () => {
           vendor: data.vendorName || data.businessName || 'Vendor',
           amount: data.totalAmount || data.amount || 0,
           formattedAmount: `₹${data.totalAmount || data.amount || 0}`,
-          status: data.status || 'placed',
+          status: data.overallStatus || data.orderStatus || data.status || 'placed',
           time: data.createdAt?.toDate?.().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) || 'N/A'
         });
       });

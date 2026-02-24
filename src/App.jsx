@@ -11,6 +11,9 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import VendorDashboard from "./pages/vendor/VendorDashboard";
 import VendorRequestForm from "./pages/vendor/RequestForm";
 
+// Delivery Partner pages
+import DeliveryPartnerPanel from "./pages/delivery/DeliveryPartnerPanel";
+
 // Route guard
 import ProtectedRoute from "./components/common/ProtectedRoute";
 
@@ -24,10 +27,11 @@ function App() {
         <Route path="/redirect" element={<RoleRedirect />} />
 
         {/* Admin Routes */}
-          <Route path="/admin-dashboard" element={<AdminDashboard />} />
+        <Route path="/admin-dashboard" element={<AdminDashboard />} />
 
-          <Route path="/vendor-request" element={<VendorRequestForm />} />
-          <Route path="/vendor-dashboard" element={<VendorDashboard />} />
+        <Route path="/vendor-request" element={<VendorRequestForm />} />
+        <Route path="/vendor-dashboard" element={<VendorDashboard />} />
+        <Route path="/delivery-partner" element={<DeliveryPartnerPanel />} />
 
         {/* Vendor Routes */}
         <Route element={<ProtectedRoute role="vendor" />}>
