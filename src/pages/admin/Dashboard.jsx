@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Users, ShoppingBag, DollarSign, Store, CheckCircle
 } from 'lucide-react';
-import { categoryService, vendorService, mapVendorToUI, deliveryService, dashboardService } from '../../services';
+import { categoryService, vendorService, mapVendorToUI, deliveryService, dashboardService, orderService } from '../../services';
 
 // Components
 import Sidebar from '../../components/admin/Sidebar';
@@ -124,8 +124,9 @@ const Dashboard = () => {
         await fetchVendors();
         await fetchCategories();
         
-        // Fetch initial recent orders
+        // Fetch initial recent orders & stats
         await fetchRecentOrders();
+        await updateStats();
         
         // Temporary empty states while migrating remaining modules
         setPartners([]);
@@ -140,17 +141,14 @@ const Dashboard = () => {
 
     fetchAllData();
 
-    // Polling for recent orders (10s)
+    // Polling for recent orders & stats (10s)
     const interval = setInterval(() => {
       fetchRecentOrders();
+      updateStats();
     }, 10000);
 
     return () => clearInterval(interval);
   }, []);
-
-  useEffect(() => {
-    updateStats();
-  }, [allVendors, partners, users, recentOrders]);
 
   const fetchVendors = async () => {
     try {
@@ -231,29 +229,23 @@ const Dashboard = () => {
     setShowOrderDetailsModal(true);
   };
 
+  const mapStats = (statsData) => ([
+    { title: 'Total Users', value: (statsData.totalUsers || 0).toString(), icon: <Users className="w-6 h-6" />, color: 'bg-blue-500', change: '+0%' },
+    { title: 'Total Vendors', value: (statsData.totalVendors || 0).toString(), icon: <Store className="w-6 h-6" />, color: 'bg-green-500', change: '+0%' },
+    { title: 'Active Vendors', value: (statsData.activeVendors || 0).toString(), icon: <CheckCircle className="w-6 h-6" />, color: 'bg-emerald-500', change: '+0%' },
+    { title: 'Total Partners', value: (statsData.totalPartners || 0).toString(), icon: <Users className="w-6 h-6" />, color: 'bg-yellow-500', change: '+0%' },
+    { title: "Today's Orders", value: (statsData.todaysOrders || statsData.todayOrders || 0).toString(), icon: <ShoppingBag className="w-6 h-6" />, color: 'bg-purple-500', change: '+0%' },
+    { title: 'Total Revenue', value: `₹${(statsData.totalRevenue || 0).toLocaleString()}`, icon: <DollarSign className="w-6 h-6" />, color: 'bg-indigo-500', change: '+0%' },
+  ]);
+
   const updateStats = async () => {
     try {
       const data = await dashboardService.getStats();
       const statsData = data?.stats || data || {};
-
-      setStats([
-        { title: 'Total Users', value: (statsData.totalUsers || 0).toString(), icon: <Users className="w-6 h-6" />, color: 'bg-blue-500', change: '+0%' },
-        { title: 'Total Vendors', value: (statsData.totalVendors || 0).toString(), icon: <Store className="w-6 h-6" />, color: 'bg-green-500', change: '+0%' },
-        { title: 'Active Vendors', value: (statsData.activeVendors || 0).toString(), icon: <CheckCircle className="w-6 h-6" />, color: 'bg-emerald-500', change: '+0%' },
-        { title: 'Total Partners', value: (statsData.totalPartners || 0).toString(), icon: <Users className="w-6 h-6" />, color: 'bg-yellow-500', change: '+0%' },
-        { title: "Today's Orders", value: (statsData.todayOrders || 0).toString(), icon: <ShoppingBag className="w-6 h-6" />, color: 'bg-purple-500', change: '+0%' },
-        { title: 'Total Revenue', value: `₹${(statsData.totalRevenue || 0).toLocaleString()}`, icon: <DollarSign className="w-6 h-6" />, color: 'bg-indigo-500', change: '+0%' },
-      ]);
+      setStats(mapStats(statsData));
     } catch (error) {
       console.error('Error updating stats:', error);
-      setStats([
-        { title: 'Total Users', value: '0', icon: <Users className="w-6 h-6" />, color: 'bg-blue-500', change: '+0%' },
-        { title: 'Total Vendors', value: '0', icon: <Store className="w-6 h-6" />, color: 'bg-green-500', change: '+0%' },
-        { title: 'Active Vendors', value: '0', icon: <CheckCircle className="w-6 h-6" />, color: 'bg-emerald-500', change: '+0%' },
-        { title: 'Total Partners', value: '0', icon: <Users className="w-6 h-6" />, color: 'bg-yellow-500', change: '+0%' },
-        { title: "Today's Orders", value: '0', icon: <ShoppingBag className="w-6 h-6" />, color: 'bg-purple-500', change: '+0%' },
-        { title: 'Total Revenue', value: '₹0', icon: <DollarSign className="w-6 h-6" />, color: 'bg-indigo-500', change: '+0%' },
-      ]);
+      setStats(mapStats({}));
     }
   };
 
