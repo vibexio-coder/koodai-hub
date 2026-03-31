@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { db } from '../../firebase/firebase.config';
-import { collectionGroup, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { orderService } from '../../services';
 
 // Hardcoded for testing — Sam's delivery partner ID
 const PARTNER_ID = 'CHE-DP-0002';
@@ -36,45 +35,54 @@ export default function DeliveryPartnerPanel() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Listen for all storeOrders assigned to Sam that are active
-        const q = query(
-            collectionGroup(db, 'storeOrders'),
-            where('delivery.partnerId', '==', PARTNER_ID),
-            where('delivery.status', 'in', ['pending_acceptance', 'accepted', 'picked_up'])
-        );
+        // Fetch initially
+        const fetchDeliveryOrders = async (isFirst = false) => {
+            if (isFirst) setLoading(true);
+            try {
+                // Fetch orders assigned to this partner that are still active
+                const ordersData = await orderService.getAll({
+                    partnerId: PARTNER_ID,
+                    status: ['pending_acceptance', 'accepted', 'picked_up'] // Filters for active delivery status
+                });
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const ordersData = snapshot.docs.map((docSnap) => {
-                const data = docSnap.data();
-                return {
-                    storeOrderPath: docSnap.ref.path,
-                    storeOrderId: docSnap.id,
-                    orderId: docSnap.ref.parent?.parent?.id || '—',
-                    customerName: data.customerName || data.userName || 'Customer',
-                    deliveryAddress: data.deliveryAddress || data.address || '—',
-                    storeTotal: data.storeTotal || 0,
-                    deliveryStatus: data.delivery?.status || 'pending_acceptance',
-                    storeStatus: data.storeStatus,
-                    storeName: data.storeName || '—',
-                };
-            });
-            setOrders(ordersData);
-            setLoading(false);
-        }, (err) => {
-            console.error('Delivery listener error:', err);
-            // Firestore composite index error — show a helpful message
-            toast.error('Index error: ' + err.message + '. Check console for index creation link.');
-            setLoading(false);
-        });
+                // Normalize backend orders to the shape expected by the UI
+                const normalized = (Array.isArray(ordersData) ? ordersData : []).map(order => ({
+                    storeOrderPath: order._id, // Use ID as path/key
+                    storeOrderId: order._id,
+                    orderId: order.orderNumber || order._id,
+                    customerName: order.customer?.name || 'Customer',
+                    deliveryAddress: order.deliveryAddress?.street 
+                        ? `${order.deliveryAddress.street}, ${order.deliveryAddress.city}` 
+                        : (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : '—'),
+                    storeTotal: order.totalAmount || 0,
+                    deliveryStatus: order.delivery?.status || 'pending_acceptance',
+                    storeStatus: order.status,
+                    storeName: order.vendor?.businessName || '—',
+                }));
 
-        return () => unsubscribe();
+                setOrders(normalized);
+            } catch (err) {
+                console.error('Delivery fetch error:', err);
+                if (isFirst) toast.error('Failed to load delivery requests');
+            } finally {
+                if (isFirst) setLoading(true);
+            }
+        };
+
+        fetchDeliveryOrders(true);
+
+        // Set up 5-second polling for real-time delivery updates
+        const interval = setInterval(() => {
+            fetchDeliveryOrders(false);
+        }, 5000);
+
+        return () => clearInterval(interval);
     }, []);
 
-    const updateDeliveryStatus = async (storeOrderPath, newStatus) => {
+    const updateDeliveryStatus = async (orderId, newStatus) => {
         try {
-            const ref = doc(db, storeOrderPath);
-            // Delivery partner ONLY writes delivery.status — vendor panel handles storeStatus sync
-            await updateDoc(ref, { 'delivery.status': newStatus });
+            // Use orderService to update delivery status in MongoDB
+            await orderService.updateStatus(orderId, newStatus);
             toast.success(`Status updated to: ${newStatus.replace('_', ' ')}`);
         } catch (err) {
             console.error('Error updating delivery status:', err);

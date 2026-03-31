@@ -10,16 +10,8 @@ import {
     Store,
     User
 } from 'lucide-react';
-import { db } from '../../firebase/firebase.config';
-import {
-    collection,
-    query,
-    orderBy,
-    onSnapshot,
-    getDocs,
-    doc,
-    collectionGroup
-} from 'firebase/firestore';
+import orderService from '../../services/orderService';
+import { toast } from 'react-toastify';
 
 const OrderManagement = ({ handleViewOrderDetails, allVendors }) => {
     const [orders, setOrders] = useState([]);
@@ -29,179 +21,75 @@ const OrderManagement = ({ handleViewOrderDetails, allVendors }) => {
     const [storeFilter, setStoreFilter] = useState('all');
     const [filteredOrders, setFilteredOrders] = useState([]);
 
-    // Fetch orders using dual-stream strategy
-    useEffect(() => {
-        setLoading(true);
+    // Fetch orders via API with polling
+    const fetchOrders = async (isFirstLoad = false) => {
+        if (isFirstLoad) setLoading(true);
+        try {
+            const res = await orderService.getAll();
+            if (res.success) {
+                // Normalize backend orders to the shape expected by the UI
+                const normalized = res.data.map(order => {
+                    const vendor = order.vendor || {};
+                    const customer = order.customer || {};
+                    
+                    return {
+                        id: order._id,
+                        parentId: order._id,
+                        uniqueId: order._id,
+                        orderNumber: order.orderNumber,
+                        orderId: order.orderNumber || order._id.slice(-8).toUpperCase(),
 
-        // 1. Fetch all storeOrders (Vendor Orders) - robust source of truth for vendor items
-        const storeOrdersQuery = query(collectionGroup(db, 'storeOrders'));
+                        // Store Info
+                        storeId: vendor._id,
+                        storeName: vendor.businessName || 'Unknown Store',
+                        storeImage: vendor.logo || '',
+                        vendorId: vendor._id,
+                        vendorName: vendor.businessName || 'Unknown Store',
+                        vendorAddress: vendor.address?.street ? `${vendor.address.street}, ${vendor.address.city}` : '',
 
-        // 2. Fetch all parent orders - for customer info & legacy support
-        const parentOrdersQuery = query(collection(db, 'orders'));
-
-        // Use onSnapshot for real-time updates on both
-        const unsubscribeStore = onSnapshot(storeOrdersQuery, (storeSnap) => {
-            const storeDocs = storeSnap.docs;
-
-            // Nested listener for parents isn't ideal for perf, but ensuring we have up-to-date parents is key.
-            // Better: Listen to both independently and merge in state or a reducer.
-            // For simplicity/stability: We'll fetch parents once or listen to them too.
-            // Let's listen to parents as well.
-        });
-
-        const unsubscribeParent = onSnapshot(parentOrdersQuery, (parentSnap) => {
-            // trigger merge
-        });
-
-        // Actually, managing two async streams merging into one state can be tricky with race conditions.
-        // Let's try a simpler approach: 
-        // We'll define a function that processes both snapshots when they update.
-        // But `onSnapshot` is event-driven.
-
-        // Revised Approach:
-        // Use a single variable to hold the unsubscribe for the combined logic? No.
-        // Let's use two unsusbcribes.
-
-        let storeDocsCache = [];
-        let parentDocsCache = new Map();
-        let isStoreLoaded = false;
-        let isParentLoaded = false;
-
-        const mergeAndSetOrders = () => {
-            if (!isStoreLoaded || !isParentLoaded) return;
-
-            const allRows = [];
-            const handledParentIds = new Set();
-
-            // 1. Process Store Orders
-            storeDocsCache.forEach(storeDoc => {
-                const storeData = storeDoc.data();
-                // Valid storeOrder?
-                if (!storeData) return;
-
-                const parentId = storeDoc.ref.parent.parent ? storeDoc.ref.parent.parent.id : null;
-                const parentOrder = (parentId && parentDocsCache.get(parentId)) || {};
-
-                if (parentId) handledParentIds.add(parentId);
-
-                allRows.push({
-                    id: storeDoc.id,
-                    parentId: parentId || 'orphan',
-                    uniqueId: `${parentId || 'orphan'}_${storeDoc.id}`,
-                    orderId: storeData.orderId || parentOrder.orderId || parentId,
-
-                    // Store Order Specifics
-                    storeId: storeData.storeId,
-                    storeName: storeData.storeName || 'Unknown Store',
-                    storeImage: storeData.storeImage,
-                    vendorId: storeData.storeOwnerId,
-                    amount: storeData.storeTotal || 0,
-                    status: storeData.storeStatus || 'Pending',
-                    items: storeData.items || [],
-
-                    // Parent Order Details (Fallback to 'N/A' if parent missing)
-                    customerId: parentOrder.userId,
-                    userName: parentOrder.userName || parentOrder.customerName || 'N/A',
-                    userPhone: parentOrder.userPhone || parentOrder.customerPhone || 'N/A',
-                    userAddress: parentOrder.userAddress,
-                    paymentMethod: parentOrder.paymentMethod || 'N/A',
-                    createdAt: storeData.createdAt || parentOrder.createdAt,
-
-                    // For Details Modal
-                    vendorName: storeData.storeName || 'Unknown Store',
-                    vendorAddress: storeData.storeAddress || '',
-
-                    totalAmount: storeData.storeTotal || 0,
-                    subtotal: storeData.storeSubtotal || 0,
-                    deliveryFee: storeData.storeDeliveryFee || 0,
-                    tax: storeData.storeTax || 0,
-
-                    // Raw Data
-                    ...storeData,
-                    parentOrder: parentOrder
+                        // Customer Info
+                        customerId: customer._id,
+                        userName: customer.name || 'N/A',
+                        userPhone: customer.phone || 'N/A',
+                        userAddress: order.deliveryAddress?.street ? `${order.deliveryAddress.street}, ${order.deliveryAddress.city}` : 'N/A',
+                        
+                        // Order Specifics
+                        amount: order.totalAmount || 0,
+                        totalAmount: order.totalAmount || 0,
+                        subtotal: order.subtotal || 0,
+                        deliveryFee: order.deliveryCharge || 0,
+                        tax: order.taxAmount || 0,
+                        status: order.status || 'Pending',
+                        paymentMethod: (order.paymentMethod || 'COD').toUpperCase(),
+                        items: order.items || [],
+                        createdAt: order.createdAt,
+                        
+                        // Raw data for details modal
+                        ...order
+                    };
                 });
-            });
 
-            // 2. Process Legacy Orders (Parents with no mapped storeOrders)
-            parentDocsCache.forEach((parentOrder, parentId) => {
-                if (!handledParentIds.has(parentId)) {
-                    // This indicates either:
-                    // a) It's a legacy order with no sub-collection
-                    // b) It's a new order but storeOrders haven't synced/created yet
+                // Sort by creation date descending
+                normalized.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                setOrders(normalized);
+            }
+        } catch (error) {
+            console.error("[OrderManagement] Error fetching orders:", error);
+            if (isFirstLoad) toast.error("Failed to load orders from server");
+        } finally {
+            if (isFirstLoad) setLoading(false);
+        }
+    };
 
-                    // We include it as a "Single Store" order
-                    allRows.push({
-                        id: parentId,
-                        parentId: parentId,
-                        uniqueId: parentId,
-                        orderId: parentOrder.orderId || parentId,
+    useEffect(() => {
+        fetchOrders(true);
 
-                        storeId: parentOrder.restaurantId || 'N/A',
-                        storeName: parentOrder.vendorName || parentOrder.businessName || 'Single Store',
-                        vendorId: parentOrder.vendorId,
-                        amount: parentOrder.totalAmount || parentOrder.amount || 0,
-                        status: parentOrder.overallStatus || parentOrder.orderStatus || parentOrder.status || 'Pending',
-                        items: parentOrder.items || [],
+        // Set up 10-second polling for "real-time" updates
+        const interval = setInterval(() => {
+            fetchOrders(false);
+        }, 10000);
 
-                        customerId: parentOrder.userId,
-                        userName: parentOrder.userName || parentOrder.customerName || 'N/A',
-                        userPhone: parentOrder.userPhone || parentOrder.customerPhone || 'N/A',
-                        userAddress: parentOrder.userAddress,
-                        paymentMethod: parentOrder.paymentMethod || 'N/A',
-                        createdAt: parentOrder.createdAt,
-
-                        vendorName: parentOrder.vendorName || parentOrder.businessName || 'Single Store',
-                        vendorAddress: parentOrder.vendorAddress || '',
-
-                        totalAmount: parentOrder.totalAmount || parentOrder.amount || 0,
-                        subtotal: parentOrder.subtotal || 0,
-                        deliveryFee: parentOrder.deliveryFee || 0,
-                        tax: parentOrder.tax || 0,
-
-                        ...parentOrder,
-                        parentOrder: parentOrder
-                    });
-                }
-            });
-
-            // Sort
-            allRows.sort((a, b) => {
-                const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-                const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
-                return dateB - dateA;
-            });
-
-            setOrders(allRows);
-            setLoading(false);
-        };
-
-        const u1 = onSnapshot(storeOrdersQuery, (snap) => {
-            storeDocsCache = snap.docs;
-            isStoreLoaded = true;
-            mergeAndSetOrders();
-        }, (error) => {
-            console.error("Error fetching storeOrders:", error);
-            // Don't block if one fails, maybe? But for now proceed.
-            isStoreLoaded = true; // Pretend loaded to unblock
-            mergeAndSetOrders();
-        });
-
-        const u2 = onSnapshot(parentOrdersQuery, (snap) => {
-            const map = new Map();
-            snap.docs.forEach(doc => map.set(doc.id, doc.data()));
-            parentDocsCache = map;
-            isParentLoaded = true;
-            mergeAndSetOrders();
-        }, (error) => {
-            console.error("Error fetching parent orders:", error);
-            isParentLoaded = true;
-            mergeAndSetOrders();
-        });
-
-        return () => {
-            u1();
-            u2();
-        };
+        return () => clearInterval(interval);
     }, []);
 
     // Filter Logic

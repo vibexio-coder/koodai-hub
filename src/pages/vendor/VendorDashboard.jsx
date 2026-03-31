@@ -62,6 +62,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { useNavigate } from 'react-router-dom';
+import vendorService from '../../services/vendorService';
+import productService from '../../services/productService';
 
 const VendorDashboard = () => {
   const navigate = useNavigate();
@@ -234,18 +236,16 @@ const VendorDashboard = () => {
     checkVendorSession();
   }, [navigate]);
 
-  // Fetch vendor info from hotels collection using applicationId
+  // Fetch vendor info from MongoDB API using applicationId or ID
   const fetchVendorInfo = async (applicationId) => {
     try {
       setLoading(true);
-      const hotelsRef = collection(db, 'hotels');
-      const q = query(hotelsRef, where('applicationId', '==', applicationId.trim()));
-      const querySnapshot = await getDocs(q);
+      // Use vendorService instead of direct Firestore
+      // We search by applicationId to find the specific vendor
+      const vendors = await vendorService.getAll({ applicationId: applicationId.trim() });
+      const vendorData = (Array.isArray(vendors) ? vendors : vendors?.vendors || [])[0];
 
-      if (!querySnapshot.empty) {
-        const vendorDoc = querySnapshot.docs[0];
-        const vendorData = vendorDoc.data();
-
+      if (vendorData) {
         // Check if vendor is approved
         if (vendorData.status !== 'approved') {
           toast.error('Your application is pending approval');
@@ -255,26 +255,29 @@ const VendorDashboard = () => {
           return;
         }
 
+        // Normalize data for the dashboard (matching expected UI shape)
         setVendorInfo({
-          id: vendorDoc.id,
-          businessName: vendorData.name || vendorData.hotelName,
-          businessId: vendorDoc.id,
-          categoryId: vendorData.categoryId,
-          categoryName: vendorData.categoryName,
+          id: vendorData._id || vendorData.id,
+          businessName: vendorData.businessName,
+          businessId: vendorData._id || vendorData.id,
+          categoryId: vendorData.categoryId || (vendorData.categories?.[0]?._id) || vendorData.categories?.[0] || '',
+          categoryName: vendorData.categoryName || (vendorData.categories?.[0]?.name) || '',
           applicationId: vendorData.applicationId,
           email: vendorData.email,
           phone: vendorData.phone,
-          address: vendorData.address,
+          address: vendorData.address?.street 
+            ? `${vendorData.address.street}, ${vendorData.address.city}` 
+            : (typeof vendorData.address === 'string' ? vendorData.address : ''),
           status: vendorData.status,
-          open: vendorData.open || false,
-          openingTime: vendorData.openingTime || '',
-          closingTime: vendorData.closingTime || '',
-          uid: vendorData.uid || vendorData.ownerId // Capture vendorUID for orders query
+          open: vendorData.isOpen !== undefined ? vendorData.isOpen : true,
+          openingTime: vendorData.openingHours?.monday?.open || '',
+          closingTime: vendorData.openingHours?.monday?.close || '',
+          uid: vendorData.user?._id || vendorData.user // Use MongoDB user ID
         });
 
-        // Start listening to vendor's products
-        setupProductsListener(vendorDoc.id, vendorData.applicationId);
-        setupOrdersListener(vendorData.applicationId); // Pass Application ID as requested
+        // Start polling for items
+        setupProductsListener(vendorData._id || vendorData.id);
+        setupOrdersListener(vendorData.applicationId); 
       } else {
         toast.error('Vendor information not found');
         sessionStorage.removeItem('vendorSession');
@@ -290,153 +293,95 @@ const VendorDashboard = () => {
     }
   };
 
-  // Setup real-time listener for vendor's products
-  const setupProductsListener = (vendorId, applicationId) => {
-    const productsRef = collection(db, 'products');
-    const q = query(
-      productsRef,
-      where('hotelId', '==', vendorId)
-    );
+  // Polling intervals
+  const productsInterval = useRef(null);
+  const ordersInterval = useRef(null);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const productsData = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        productsData.push({
-          id: doc.id,
-          ...data,
-          name: data.productName || data.name,
-          description: data.productDescription || data.description,
-          quantity: data.stockQuantity || data.quantity || 1,
-          image: data.productImage || data.image,
-          inStock: data.inStock !== false, // Default to true if missing
-          availability: data.status === 'active' || data.availability === true,
-        });
-      });
-      setProducts(productsData);
-      updateStats(productsData);
-    }, (error) => {
-      console.error('Error in products listener:', error);
-      toast.error('Error loading products');
-    });
+  // Setup API polling for vendor's products
+  const setupProductsListener = (vendorId) => {
+    if (!vendorId) return () => {};
 
-    return unsubscribe;
+    const fetchProducts = async (isFirst = false) => {
+      try {
+        const res = await productService.getByVendor(vendorId);
+        if (res.success) {
+          const productsData = res.data.map(p => ({
+            id: p._id,
+            ...p,
+            name: p.productName || p.name,
+            description: p.productDescription || p.description,
+            quantity: p.stockQuantity || p.stock || 1,
+            image: p.thumbnail || p.images?.[0] || p.image,
+            inStock: p.isInStock !== false && p.stock > 0,
+            availability: p.status === 'active' || p.isAvailable === true,
+          }));
+          setProducts(productsData);
+          updateStats(productsData);
+        }
+      } catch (err) {
+        console.error('Error fetching products:', err);
+        if (isFirst) toast.error('Error loading products');
+      }
+    };
+
+    fetchProducts(true);
+    productsInterval.current = setInterval(() => fetchProducts(false), 15000);
+
+    return () => {
+      if (productsInterval.current) clearInterval(productsInterval.current);
+    };
   };
 
-  // Setup real-time listener for vendor's orders
-  const setupOrdersListener = (vendorUID) => {
-    if (!vendorUID) {
-      console.error('VendorDashboard: No vendorUID provided for orders listener');
-      return () => { };
-    }
+  // Setup API polling for vendor's orders
+  const setupOrdersListener = (applicationId) => {
+    if (!applicationId) return () => {};
 
-    // collectionGroup query to find all storeOrders for this vendor where status is Pending
-    const q = query(
-      collectionGroup(db, 'storeOrders'),
-      where('storeOwnerId', '==', vendorUID)
-    );
-
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      console.log('VendorDashboard: Orders snapshot received');
-      console.log('VendorDashboard: storeOwnerId used for query:', vendorUID);
-      console.log('VendorDashboard: Snapshot size:', snapshot.size);
-
-      if (snapshot.empty) {
-        console.log('VendorDashboard: No Pending storeOrders found for this vendor.');
-        setOrders([]);
-        setLoading(false);
-        return;
-      }
-
+    const fetchOrders = async (isFirst = false) => {
       try {
-        const ordersPromises = snapshot.docs.map(async (storeOrderDoc) => {
-          const storeOrderData = storeOrderDoc.data();
-          console.log(`Processing storeOrder: ${storeOrderDoc.id}`, storeOrderData);
+        const res = await orderService.getAll({ applicationId });
+        
+        if (res.success) {
+          const ordersData = res.data.map(order => {
+            return {
+              id: order._id,
+              ...order,
+              totalAmount: order.totalAmount || 0,
+              status: order.status || 'Pending',
+              delivery: order.deliveryPartner ? { status: order.status, name: order.deliveryPartner.name } : null,
+              items: (order.items || []).map(item => ({
+                id: item.product?._id || item.product,
+                productName: item.name,
+                price: item.price,
+                quantity: item.quantity,
+                productImage: item.image
+              })),
+              storeOrderId: order._id,
+              storeDocId: order._id
+            };
+          });
 
-          // The parent of storeOrders/{storeId} is the order document
-          // path: orders/{orderId}/storeOrders/{storeId}
-          const orderRef = storeOrderDoc.ref.parent.parent;
+          // Client-side sort by creation time
+          ordersData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          setOrders(ordersData);
 
-          if (!orderRef) {
-            console.error(`StoreOrder ${storeOrderDoc.id} has no parent order (orphan?). Path: ${storeOrderDoc.ref.path}`);
-            return null;
-          }
+          const totalSales = ordersData
+            .filter(o => o.status === 'delivered')
+            .reduce((sum, order) => sum + (parseFloat(order.totalAmount) || 0), 0);
 
-          const orderSnap = await getDoc(orderRef);
-          if (!orderSnap.exists()) {
-            console.error(`Parent order not found for storeOrder ${storeOrderDoc.id}. ParentID: ${orderRef.id}`);
-            return null;
-          }
-
-          const orderData = orderSnap.data();
-          // console.log(`Parent order found: ${orderRef.id}`, orderData); // Reduced logging
-
-          // Fetch products subcollection for this store order
-          // path: orders/{orderId}/storeOrders/{storeId}/products
-          const productsSnapshot = await getDocs(collection(storeOrderDoc.ref, 'products'));
-          const productsData = productsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-
-          // --- DELIVERY AUTO-SYNC ---
-          // If delivery partner has delivered, vendor panel auto-updates storeStatus
-          // (Separation of responsibility: delivery only writes delivery.status)
-          if (
-            storeOrderData.delivery?.status === 'delivered' &&
-            storeOrderData.storeStatus !== 'Delivered'
-          ) {
-            updateDoc(storeOrderDoc.ref, { storeStatus: 'Delivered' }).catch(console.error);
-          }
-
-          // Combine parent order data with store-specific data
-          const isCancelled = orderData.orderStatus === 'Cancelled' || orderData.status === 'Cancelled';
-          const status = isCancelled ? 'Cancelled' : (storeOrderData.storeStatus || 'Pending');
-
-          return {
-            id: orderRef.id,
-            ...orderData,
-            totalAmount: storeOrderData.storeTotal || 0,
-            status: status,
-            delivery: storeOrderData.delivery || null, // Pass delivery object through
-            items: productsData,
-            storeOrderId: storeOrderDoc.id,
-            storeDocId: storeOrderDoc.id,
-            storeOrderPath: storeOrderDoc.ref.path,
-            parentOrderPath: orderRef.path
-          };
-        });
-
-        const ordersData = (await Promise.all(ordersPromises)).filter(order => order !== null);
-
-        // Client-side sort by creation time
-        ordersData.sort((a, b) => {
-          const dateA = a.createdAt?.toDate?.() || new Date(0);
-          const dateB = b.createdAt?.toDate?.() || new Date(0);
-          return dateB - dateA;
-        });
-
-        setOrders(ordersData);
-
-        // Calculate total sales - Note: This calculation might need adjustment if we only fetch Pending orders.
-        // For now, keeping it as is, but it will likely be 0 if we only fetch Pending.
-        // To get total sales, we'd need a separate query for 'Accepted'/'Delivered' orders or a broader query.
-        // Given constraints, we'll leave this as is for now, acknowledging it only counts loaded orders.
-        const totalSales = ordersData
-          .filter(o => o.status === 'delivered')
-          .reduce((sum, order) => sum + (parseFloat(order.totalAmount) || 0), 0);
-
-        setStats(prev => ({ ...prev, totalSales }));
-
-      } catch (error) {
-        console.error('Error processing orders snapshot:', error);
+          setStats(prev => ({ ...prev, totalSales }));
+        }
+      } catch (err) {
+        console.error('Error fetching orders:', err);
+        if (isFirst) toast.error('Error loading orders');
       }
-    }, (error) => {
-      console.error('Error in orders listener:', error);
-      toast.error('Error loading orders');
-    });
+    };
 
-    return unsubscribe;
+    fetchOrders(true);
+    ordersInterval.current = setInterval(() => fetchOrders(false), 10000);
+
+    return () => {
+      if (ordersInterval.current) clearInterval(ordersInterval.current);
+    };
   };
 
   // DEBUG: Diagnostic tool to check Firestore structure
@@ -756,16 +701,50 @@ const VendorDashboard = () => {
           break;
       }
 
+      // Map UI state to MongoDB Product schema
+      const productPayload = {
+        name: newProduct.name,
+        description: newProduct.description,
+        price: parseFloat(newProduct.price) || 0,
+        stock: parseInt(newProduct.quantity) || 0,
+        isInStock: newProduct.inStock,
+        status: newProduct.availability ? 'active' : 'inactive',
+        isAvailable: newProduct.availability,
+        thumbnail: imageUrl || newProduct.image,
+        images: imageUrl ? [imageUrl] : (newProduct.image ? [newProduct.image] : []),
+        vendor: vendorInfo.id, // MongoDB ObjectId
+        category: vendorInfo.categoryId, // MongoDB ObjectId
+        isVeg: newProduct.isVeg,
+        unit: unit || 'piece',
+        
+        // Category-specific flattening (backend model has Map of String or specific fields)
+        tags: [],
+        nutritionInfo: {},
+      };
+
+      // Add category-specific fields based on vendor category
+      if (vendorInfo.categoryName === 'Food') {
+        productPayload.tags.push(newProduct.cuisine);
+        productPayload.nutritionInfo = {
+          spiceLevel: newProduct.spiceLevel,
+          preparationTime: newProduct.preparationTime,
+          calories: newProduct.calories
+        };
+      } else if (vendorInfo.categoryName === 'Medicine') {
+        productPayload.tags.push(newProduct.medicineType);
+        productPayload.nutritionInfo = {
+          expiryDate: newProduct.expiryDate,
+          batchNumber: newProduct.batchNumber,
+          manufacturer: newProduct.manufacturer
+        };
+      }
+
       if (editingProduct) {
-        // Update existing product - remove createdAt for updates
-        delete productData.createdAt;
-        productData.updatedAt = serverTimestamp();
-        await updateDoc(doc(db, 'products', editingProduct.id), productData);
+        await productService.update(editingProduct.id, productPayload);
         toast.success('Product updated successfully!');
       } else {
-        // Add new product - save to products collection
-        const docRef = await addDoc(collection(db, 'products'), productData);
-        toast.success(`Product added successfully! ID: ${docRef.id}`);
+        await productService.create(productPayload);
+        toast.success(`Product added successfully!`);
       }
 
       // Reset form and close modal
@@ -775,7 +754,7 @@ const VendorDashboard = () => {
 
     } catch (error) {
       console.error('Error saving product:', error);
-      toast.error(`Failed to save product: ${error.message}`);
+      toast.error(`Failed to save product: ${error.displayMessage || error.message}`);
     } finally {
       setLoading(false);
     }
@@ -860,7 +839,7 @@ const VendorDashboard = () => {
     if (!window.confirm('Are you sure you want to delete this product?')) return;
 
     try {
-      await deleteDoc(doc(db, 'products', productId));
+      await productService.delete(productId);
       toast.success('Product deleted successfully');
     } catch (error) {
       console.error('Error deleting product:', error);
@@ -870,10 +849,7 @@ const VendorDashboard = () => {
 
   const handleToggleStock = async (productId, currentStatus) => {
     try {
-      await updateDoc(doc(db, 'products', productId), {
-        inStock: !currentStatus,
-        updatedAt: serverTimestamp()
-      });
+      await productService.update(productId, { isInStock: !currentStatus });
       toast.success(`Product marked as ${!currentStatus ? 'In Stock' : 'Out of Stock'}`);
     } catch (error) {
       console.error('Error updating stock status:', error);
@@ -1024,7 +1000,7 @@ const VendorDashboard = () => {
               <>
                 <button
                   onClick={() => {
-                    handleRejectOrder(selectedOrder.id, selectedOrder.storeDocId, selectedOrder.storeOrderPath, selectedOrder.parentOrderPath);
+                    handleRejectOrder(selectedOrder.id);
                     setShowOrderModal(false);
                   }}
                   className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors flex items-center gap-2"
@@ -1033,7 +1009,7 @@ const VendorDashboard = () => {
                 </button>
                 <button
                   onClick={() => {
-                    handleAcceptOrder(selectedOrder.id, selectedOrder.storeDocId, selectedOrder.storeOrderPath, selectedOrder.parentOrderPath);
+                    handleAcceptOrder(selectedOrder.id);
                     setShowOrderModal(false);
                   }}
                   className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-sm transition-colors flex items-center gap-2"
@@ -1046,7 +1022,7 @@ const VendorDashboard = () => {
             {selectedOrder.status === 'Preparing' && (
               <button
                 onClick={() => {
-                  handleReadyOrder(selectedOrder.id, selectedOrder.storeDocId, selectedOrder.storeOrderPath);
+                  handleReadyOrder(selectedOrder.id);
                   setShowOrderModal(false);
                 }}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors flex items-center gap-2"
@@ -1067,100 +1043,35 @@ const VendorDashboard = () => {
    * VENDOR STATUS LOGIC
    */
 
-  // 1. Pending -> Preparing + Assign Delivery Partner
-  const handleAcceptOrder = async (orderId, storeDocId, storeOrderPath, parentOrderPath) => {
+  // 1. Pending -> Preparing
+  const handleAcceptOrder = async (orderId) => {
     try {
-      if (!orderId || !storeDocId) {
-        throw new Error(`Missing IDs: orderId=${orderId}, storeDocId=${storeDocId}`);
-      }
-
-      const storeOrderRef = storeOrderPath
-        ? doc(db, storeOrderPath)
-        : doc(db, 'orders', orderId, 'storeOrders', storeDocId);
-
-      // Update storeStatus + assign delivery partner (hardcoded Sam for testing)
-      await updateDoc(storeOrderRef, {
-        storeStatus: 'Preparing',
-        delivery: {
-          partnerId: 'CHE-DP-0002',
-          partnerName: 'Sam',
-          assignedAt: serverTimestamp(),
-          status: 'pending_acceptance'
-        }
-      });
-
-      // Update parent order status
-      const parentOrderRef = parentOrderPath
-        ? doc(db, parentOrderPath)
-        : doc(db, 'orders', orderId);
-
-      await updateDoc(parentOrderRef, {
-        overallStatus: 'Confirmed',
-        orderStatus: 'Confirmed'
-      });
-
-      toast.success('Order accepted! Delivery partner Sam has been notified.');
-
+      await orderService.updateStatus(orderId, { status: 'Preparing' });
+      toast.success('Order accepted! Status: Preparing');
     } catch (error) {
       console.error('Error accepting order:', error);
-      toast.error(`Failed to accept order: ${error.message || error.code}`);
+      toast.error(`Failed to accept order: ${error.displayMessage || error.message}`);
     }
   };
 
   // 2. Preparing -> Out for Delivery (Ready Button)
-  const handleReadyOrder = async (orderId, storeDocId, storeOrderPath) => {
+  const handleReadyOrder = async (orderId) => {
     try {
-      if (!orderId || !storeDocId) {
-        throw new Error(`Missing IDs`);
-      }
-
-      const storeOrderRef = storeOrderPath
-        ? doc(db, storeOrderPath)
-        : doc(db, 'orders', orderId, 'storeOrders', storeDocId);
-
-      await updateDoc(storeOrderRef, {
-        storeStatus: 'Out for Delivery',
-      });
-
+      await orderService.updateStatus(orderId, { status: 'Out for Delivery' });
       toast.success('Order marked as Ready! Status changed to Out for Delivery.');
-
     } catch (error) {
       console.error('Error marking order ready:', error);
       toast.error('Failed to update order status');
     }
   };
 
-  const handleRejectOrder = async (orderId, storeDocId, storeOrderPath, parentOrderPath) => {
+  const handleRejectOrder = async (orderId) => {
     try {
-      if (!orderId || !storeDocId) {
-        throw new Error(`Missing IDs: orderId=${orderId}, storeDocId=${storeDocId}`);
-      }
-      console.log(`Rejecting order: ${orderId}, storeDocId: ${storeDocId}, path: ${storeOrderPath}, parentPath: ${parentOrderPath}`);
-
-      // 1. Update storeStatus = "Rejected"
-      const storeOrderRef = storeOrderPath
-        ? doc(db, storeOrderPath)
-        : doc(db, 'orders', orderId, 'storeOrders', storeDocId);
-
-      await updateDoc(storeOrderRef, {
-        storeStatus: 'Rejected'
-      });
-
-      // 2. Update parent order
-      const parentOrderRef = parentOrderPath
-        ? doc(db, parentOrderPath)
-        : doc(db, 'orders', orderId);
-
-      await updateDoc(parentOrderRef, {
-        overallStatus: 'Rejected',
-        orderStatus: 'Rejected'
-      });
-
+      await orderService.updateStatus(orderId, { status: 'Rejected' });
       toast.success('Order rejected');
-
     } catch (error) {
       console.error('Error rejecting order:', error);
-      toast.error(`Failed to reject order: ${error.message || error.code}`);
+      toast.error(`Failed to reject order: ${error.displayMessage || error.message}`);
     }
   };
 

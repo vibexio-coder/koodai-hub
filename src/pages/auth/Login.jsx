@@ -1,12 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { db, auth } from '../../firebase/firebase.config';
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs 
-} from 'firebase/firestore';
+import { vendorService, mapVendorToUI, apiClient } from '../../services';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { Tag } from 'lucide-react';
@@ -28,66 +22,61 @@ const Login = () => {
     setLoading(true);
     
     try {
-      // Validate application ID
       if (!applicationId.trim()) {
         toast.error('Please enter Application ID');
         setLoading(false);
         return;
       }
       
-      // Check if vendor exists in hotels collection with this application ID
-      const hotelsRef = collection(db, 'hotels');
-      const q = query(hotelsRef, where('applicationId', '==', applicationId.trim()));
-      const querySnapshot = await getDocs(q);
+      // Perform direct login using the dedicated API endpoint
+      const response = await apiClient.post('/auth/vendor-login', { 
+        applicationId: applicationId.trim() 
+      });
       
-      if (querySnapshot.empty) {
-        toast.error('Invalid Application ID');
+      // Extract vendor data from the standard backend response
+      const vendorData = response.data?.vendor;
+
+      if (!vendorData) {
+        toast.error('Invalid response from server');
         setLoading(false);
         return;
       }
-      
-      // Get vendor data
-      const vendorDoc = querySnapshot.docs[0];
-      const vendorData = vendorDoc.data();
-      
-      // Check if vendor is approved
-      if (vendorData.status !== 'approved') {
-        toast.error('Your application is pending approval');
-        setLoading(false);
-        return;
-      }
-      
-      // Store vendor info in localStorage/sessionStorage for session management
+
+      // Store highly normalized session details
       const sessionData = {
-        vendorId: vendorDoc.id,
-        applicationId: applicationId.trim(),
-        hotelName: vendorData.hotelName || '',
+        role: "vendor",
+        vendorId: vendorData.id || vendorData._id,
+        applicationId: vendorData.applicationId,
+        hotelName: vendorData.name || '',
         email: vendorData.email || '',
         loginTime: new Date().toISOString(),
+        token: response.data?.token || null,
         rememberMe: rememberMe
       };
       
       if (rememberMe) {
         localStorage.setItem('vendorSession', JSON.stringify(sessionData));
+        if (response.data?.token) localStorage.setItem('koodai_token', response.data.token);
       } else {
         sessionStorage.setItem('vendorSession', JSON.stringify(sessionData));
+        if (response.data?.token) sessionStorage.setItem('koodai_token', response.data.token);
       }
       
-      toast.success('Login successful!');
+      // Ensure it is primarily accessible directly regardless of remember me status:
+      if (response.data?.token) {
+        localStorage.setItem('koodai_token', response.data.token);
+      }
+
       
-      // Navigate to vendor dashboard
+      toast.success('Login successful!');
       navigate('/vendor-dashboard');
       
     } catch (error) {
       console.error('Login error:', error);
-      
-      if (error.code === 'permission-denied') {
-        setError('Database permission error');
-        toast.error('Unable to access vendor data');
-      } else {
-        setError('Login failed. Please try again.');
-        toast.error('Login failed. Please try again.');
-      }
+      setError('Login failed. Please try again.');
+      // Extract clean error message from our new backend structure if it exists
+      const serverMessage = error.response?.data?.message || error.displayMessage || 'Invalid Application ID or not approved.';
+      toast.error(serverMessage);
     } finally {
       setLoading(false);
     }

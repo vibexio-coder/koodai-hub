@@ -6,10 +6,12 @@ import { collection, addDoc, serverTimestamp, getDocs, query, orderBy } from 'fi
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
+import categoryService from '../../services/categoryService';
+import vendorService from '../../services/vendorService';
+
 const RequestForm = () => {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
-
   const [formData, setFormData] = useState({
     // Section 1: Basic Business Information
     businessName: '',
@@ -111,34 +113,34 @@ const RequestForm = () => {
   const [applicationNumber, setApplicationNumber] = useState('');
   const [imagePreview, setImagePreview] = useState('');
 
-  // Fetch categories from Firebase on component mount
+  // Fetch categories from API on component mount
   useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        setLoading(true);
+        // Use categoryService instead of direct Firestore
+        const data = await categoryService.getAll();
+        
+        // Normalize categories for the form (id mapping)
+        // Supportive of both { data: [...] } and direct array responses
+        const categoriesData = (Array.isArray(data) ? data : data?.categories || []).map(cat => ({
+          id: cat._id || cat.id,
+          ...cat
+        }));
+
+        setCategories(categoriesData);
+      } catch (error) {
+        console.error('Error fetching categories:', error);
+        toast.error('Failed to load categories. Please refresh the page.');
+        // Fallback to empty to prevent crash
+        setCategories([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchCategories();
   }, []);
-
-  const fetchCategories = async () => {
-    try {
-      setLoading(true);
-      const categoriesRef = collection(db, 'categories');
-      const q = query(categoriesRef, orderBy('order', 'asc'));
-      const querySnapshot = await getDocs(q);
-
-      const categoriesData = [];
-      querySnapshot.forEach((doc) => {
-        categoriesData.push({
-          id: doc.id,
-          ...doc.data()
-        });
-      });
-
-      setCategories(categoriesData);
-    } catch (error) {
-      console.error('Error fetching categories:', error);
-      toast.error('Failed to load categories. Please refresh the page.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Validation functions
   const validateEmail = (email) => {
@@ -1414,9 +1416,8 @@ const RequestForm = () => {
         inStock: formData.inStock !== false,
       };
 
-      // Save to Firebase hotels collection
-      const hotelsCollection = collection(db, 'hotels');
-      await addDoc(hotelsCollection, hotelData);
+      // Save to MongoDB via vendorService
+      await vendorService.create(hotelData);
 
       setApplicationNumber(applicationId);
       setFormSubmitted(true);
@@ -1428,7 +1429,7 @@ const RequestForm = () => {
       }
 
       // Log for debugging
-      console.log('Application submitted to hotels collection:', hotelData);
+      console.log('Application submitted to backend:', hotelData);
 
     } catch (error) {
       console.error('Error submitting form:', error);
