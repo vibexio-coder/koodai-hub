@@ -257,7 +257,7 @@ const RequestForm = () => {
       newErrors.storeImage = 'Please upload a store image or provide an image URL';
     }
 
-    // Additional validation based on category name from Firebase
+    // Additional validation based on category name from Backend
     const selectedCategory = categories.find(cat => cat.id === formData.storeCategory);
     if (selectedCategory) {
       const categoryName = selectedCategory.name;
@@ -437,7 +437,7 @@ const RequestForm = () => {
     }
   };
 
-  // Map Firebase category IDs to category names for business logic
+  // Map Backend category IDs to category names for business logic
   const getCategoryName = (categoryId) => {
     const category = categories.find(cat => cat.id === categoryId);
     return category ? category.name : '';

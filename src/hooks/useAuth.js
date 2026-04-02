@@ -1,115 +1,136 @@
-import { useEffect, useState, useCallback } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "../firebase/firebase.config";
+import { useEffect, useState, useCallback, useRef } from "react";
 import apiClient from "../services/apiClient.js";
 
 // ─── useAuth ──────────────────────────────────────────────────────────────────
-// Keeps Firebase Auth as the session source of truth.
-// On sign-in, fetches role + status from the backend /api/me endpoint
-// (which reads our MongoDB User record instead of Firestore).
+// Pure JWT-based session hook. No Firebase.
 //
-// Return shape is IDENTICAL to the old hook so no consumers break.
+// Flow:
+//   1. On mount → read token from localStorage / sessionStorage
+//   2. No token  → user = null, loading = false
+//   3. Token found → call GET /api/auth/me
+//   4. Success → populate user, userRole, userStatus
+//   5. Failure (401 / expired) → clear token, logout
+//
+// Return shape is backward-compatible with the old Firebase-based hook.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TOKEN_KEY = "koodai_token";
+
+/** Read token from localStorage first, then sessionStorage */
+const getStoredToken = () =>
+  localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || null;
+
+/** Remove token from both storages */
+const clearStoredToken = () => {
+  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem("adminSession");
+  sessionStorage.removeItem("adminSession");
+  localStorage.removeItem("vendorSession");
+  sessionStorage.removeItem("vendorSession");
+};
 
 const useAuth = () => {
   const [user,       setUser]       = useState(null);
-  const [dbUser,     setDbUser]     = useState(null); // MongoDB user record
+  const [dbUser,     setDbUser]     = useState(null);  // full MongoDB record
   const [userRole,   setUserRole]   = useState(null);
   const [userStatus, setUserStatus] = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState(null);
 
-  // Fetch the backend user profile (called after Firebase confirms auth state)
-  const fetchDbUser = useCallback(async (currentUser) => {
+  const isMounted = useRef(true);
+
+  /** Fetch the current user profile from the backend */
+  const fetchUser = useCallback(async () => {
+    const token = getStoredToken();
+
+    // 1. No token → immediately clear state
+    if (!token) {
+      if (isMounted.current) {
+        setUser(null);
+        setDbUser(null);
+        setUserRole(null);
+        setUserStatus(null);
+        setLoading(false);
+      }
+      return;
+    }
+
+    // 2. Token exists → verify with backend
     try {
-      const res = await apiClient.get("/me");
-      const profile = res.data?.user || res.data; // Handle different response shapes
-      
+      const res = await apiClient.get("/auth/me");
+      const profile = res.data?.user;
+
+      if (!isMounted.current) return;
+
       if (profile) {
+        setUser(profile);
         setDbUser(profile);
-        setUserRole(profile.role ?? null);
+        setUserRole(profile.role   ?? null);
         setUserStatus(profile.status ?? null);
-        return;
+        setError(null);
+      } else {
+        throw new Error("Empty profile response");
       }
     } catch (err) {
-      console.warn("[useAuth] Could not fetch backend user profile:", err.displayMessage || err.message);
-      // Fallback: Use Firebase user info if backend fails, do NOT logout
-      setDbUser(null);
-      // Optional: you could infer a default role here if needed, 
-      // but keeping it null to signify "unverified by backend"
+      if (!isMounted.current) return;
+      const status = err.response?.status;
+      console.warn("[useAuth] Session check failed:", err.displayMessage || err.message);
+
+      // 401 / 403 = token invalid or expired → logout
+      if (status === 401 || status === 403) {
+        clearStoredToken();
+        setUser(null);
+        setDbUser(null);
+        setUserRole(null);
+        setUserStatus(null);
+        setError("Session expired. Please log in again.");
+      } else {
+        // Network error or 5xx — don't wipe session, just flag the error
+        setError("Could not reach server. Please check your connection.");
+      }
+    } finally {
+      if (isMounted.current) setLoading(false);
     }
   }, []);
 
+  // Run on mount; cleanup sets isMounted = false to prevent stale state updates
   useEffect(() => {
-    let isMounted = true;
+    isMounted.current = true;
+    fetchUser();
+    return () => { isMounted.current = false; };
+  }, [fetchUser]);
 
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      // Start/Keep loading as soon as an auth change is detected
-      setLoading(true);
-
-      if (!currentUser) {
-        if (isMounted) {
-          setUser(null);
-          setDbUser(null);
-          setUserRole(null);
-          setUserStatus(null);
-          setError(null);
-          setLoading(false);
-        }
-        return;
-      }
-
-      // We have a Firebase user, now get the backend profile before finishing loading
-      try {
-        const token = await currentUser.getIdToken();
-        const res = await apiClient.get("/me", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const profile = res.data?.user || res.data;
-        
-        if (isMounted) {
-          if (profile) {
-            setDbUser(profile);
-            setUserRole(profile.role ?? null);
-            setUserStatus(profile.status ?? null);
-          }
-          setUser(currentUser);
-        }
-      } catch (err) {
-        console.warn("[useAuth] Backend profile fetch failed:", err.message);
-        if (isMounted) {
-          setUser(currentUser); // Keep Firebase user even if backend fails
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      unsubscribe();
-    };
-  }, []); // Removed fetchDbUser from deps to keep it simple and avoid effect re-runs
-
-  // Manual refresh — call this after role promotion or profile update
+  /** Manually refresh user profile (call after role update, profile edit, etc.) */
   const refreshUser = useCallback(async () => {
-    if (auth.currentUser) {
-      await fetchDbUser();
-    }
-  }, [fetchDbUser]);
+    if (isMounted.current) setLoading(true);
+    await fetchUser();
+  }, [fetchUser]);
+
+  /** Log out: clear token + reset state */
+  const logout = useCallback(() => {
+    clearStoredToken();
+    if (!isMounted.current) return;
+    setUser(null);
+    setDbUser(null);
+    setUserRole(null);
+    setUserStatus(null);
+    setLoading(false);
+    setError(null);
+  }, []);
 
   return {
-    // ── Core (same as old hook) ───────────────────────────────────────────────
-    user,         // Firebase user object (uid, email, displayName, etc.)
+    // ── Core (backward-compatible) ────────────────────────────────────────────
+    user,         // MongoDB user object (id, name, email, role, status, avatar)
     userRole,     // 'admin' | 'vendor' | 'delivery' | 'customer'
     userStatus,   // 'active' | 'inactive' | 'suspended'
-    loading,
+    loading,      // true while checking session on app load
 
-    // ── Extras (new, safe to ignore if not needed) ────────────────────────────
-    dbUser,       // Full MongoDB user record
-    error,        // Non-fatal fetch error message
+    // ── Extras ────────────────────────────────────────────────────────────────
+    dbUser,       // alias for user (full MongoDB record)
+    error,        // session or network error message
     refreshUser,  // () => Promise<void> — force re-fetch from backend
+    logout,       // () => void — clear session + reset state
   };
 };
 

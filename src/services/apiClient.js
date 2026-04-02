@@ -1,12 +1,10 @@
 // ─── Centralized Axios Client ────────────────────────────────────────────────
 // All API requests go through this client.
 // - Reads base URL from VITE_API_BASE_URL env var
-// - Auto-attaches Firebase ID token on every request
-// - Handles token refresh transparently
+// - Auto-attaches JWT token from localStorage on every request
 // - Parses error messages from backend response shape { success, message }
 
 import axios from 'axios';
-import { auth } from '../firebase/firebase.config.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -18,25 +16,12 @@ const apiClient = axios.create({
   timeout: 15000, // 15s timeout
 });
 
-// ─── Request Interceptor — attach tokens ────────────────────────────────────────
+// ─── Request Interceptor — attach JWT token ─────────────────────────────────
 apiClient.interceptors.request.use(
-  async (config) => {
-    try {
-      // 1. Check for custom vendor JWT token
-      const vendorToken = localStorage.getItem('koodai_token') || sessionStorage.getItem('koodai_token');
-      if (vendorToken) {
-        config.headers.Authorization = `Bearer ${vendorToken}`;
-        return config; // Early return if custom token is used
-      }
-
-      // 2. Fallback to Firebase admin token
-      const user = auth?.currentUser;
-      if (user) {
-        const token = await user.getIdToken();
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-    } catch (err) {
-      console.warn('[apiClient] Interceptor - Token error:', err.message);
+  (config) => {
+    const token = localStorage.getItem('koodai_token') || sessionStorage.getItem('koodai_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
@@ -46,25 +31,7 @@ apiClient.interceptors.request.use(
 // ─── Response Interceptor — normalize errors ─────────────────────────────────
 apiClient.interceptors.response.use(
   (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-
-    // Auto-retry once on 401 with a fresh token (handles token expiry)
-    if (
-      error.response?.status === 401 &&
-      !originalRequest._retried &&
-      auth.currentUser
-    ) {
-      originalRequest._retried = true;
-      try {
-        const freshToken = await auth.currentUser.getIdToken(true); // force refresh
-        originalRequest.headers.Authorization = `Bearer ${freshToken}`;
-        return apiClient(originalRequest);
-      } catch (refreshError) {
-        console.error('[apiClient] Token refresh failed:', refreshError.message);
-      }
-    }
-
+  (error) => {
     // Extract backend error message if available
     const message =
       error.response?.data?.message ||

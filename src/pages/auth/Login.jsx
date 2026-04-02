@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { vendorService, mapVendorToUI, apiClient } from '../../services';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { Tag } from 'lucide-react';
+import { Tag, Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -82,21 +82,60 @@ const Login = () => {
     }
   };
 
-  const handleAdminLogin = (e) => {
+  const handleAdminLogin = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      if (adminEmail === "vibexio@gmail.com" && adminPassword === "123456") {
-        console.log("Admin login successful!");
-        navigate("/admin-dashboard");
-      } else {
-        setError("Invalid admin credentials. Please try again.");
+    try {
+      if (!adminEmail.trim() || !adminPassword.trim()) {
+        toast.error('Please enter email and password');
         setLoading(false);
+        return;
       }
-    }, 1000);
+
+      // 1. Authenticate with backend API
+      const response = await apiClient.post('/auth/login', { 
+        email: adminEmail.trim(), 
+        password: adminPassword 
+      });
+
+      const { token, user } = response.data;
+
+      // 2. Provision Admin Session
+      const sessionData = {
+        role: "admin",
+        uid: user.id || user._id,
+        email: user.email,
+        name: user.name,
+        loginTime: new Date().toISOString(),
+        rememberMe: rememberMe
+      };
+
+      if (rememberMe) {
+        localStorage.setItem('adminSession', JSON.stringify(sessionData));
+        if (token) localStorage.setItem('koodai_token', token);
+      } else {
+        sessionStorage.setItem('adminSession', JSON.stringify(sessionData));
+        if (token) sessionStorage.setItem('koodai_token', token);
+      }
+
+      // Global token for API client
+      if (token) {
+        localStorage.setItem('koodai_token', token);
+      }
+
+      toast.success('Admin login successful!');
+      navigate("/admin-dashboard");
+    } catch (authError) {
+      console.error('Admin Auth Error:', authError);
+      
+      const serverMessage = authError.response?.data?.message || authError.displayMessage || 'Invalid email or password.';
+      setError(serverMessage);
+      toast.error(serverMessage);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async (e) => {

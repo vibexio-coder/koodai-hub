@@ -38,32 +38,12 @@ import {
   Utensils,
   ShoppingCart
 } from 'lucide-react';
-import { db, storage, auth } from '../../firebase/firebase.config';
-import {
-  collection,
-  addDoc,
-  getDocs,
-  updateDoc,
-  deleteDoc,
-  doc,
-  query,
-  where,
-  orderBy,
-  serverTimestamp,
-  onSnapshot,
-  collectionGroup,
-  getDoc
-} from 'firebase/firestore';
-import {
-  signOut,
-  onAuthStateChanged
-} from 'firebase/auth';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { useNavigate } from 'react-router-dom';
 import vendorService from '../../services/vendorService';
 import productService from '../../services/productService';
+import uploadService from '../../services/uploadService';
 
 const VendorDashboard = () => {
   const navigate = useNavigate();
@@ -143,6 +123,7 @@ const VendorDashboard = () => {
     description: '',
     price: '',
     image: '',
+    imageFile: null,
     inStock: true,
     availability: true,
     quantity: 1,
@@ -384,42 +365,7 @@ const VendorDashboard = () => {
     };
   };
 
-  // DEBUG: Diagnostic tool to check Firestore structure
-  const debugDataStructure = async () => {
-    try {
-      console.log('--- START DIAGNOSTIC CHECK ---');
-      const ordersRef = collection(db, 'orders');
-      // Import limit if missed
-      const q = query(ordersRef, orderBy('createdAt', 'desc'));
-      const snapshot = await getDocs(q);
 
-      console.log(`Diagnostic: Fetched ${snapshot.size} recent orders from 'orders' collection.`);
-
-      const limitedDocs = snapshot.docs.slice(0, 5);
-
-      for (const orderDoc of limitedDocs) {
-        console.log(`Checking Order: ${orderDoc.id}`);
-        // Check storeOrders subcollection
-        const storeOrdersRef = collection(orderDoc.ref, 'storeOrders');
-        const storeOrdersSnap = await getDocs(storeOrdersRef);
-
-        if (storeOrdersSnap.empty) {
-          console.log(`  > No 'storeOrders' subcollection found.`);
-        } else {
-          console.log(`  > Found ${storeOrdersSnap.size} documents in 'storeOrders'.`);
-          storeOrdersSnap.docs.forEach(doc => {
-            console.log(`    > Doc ID: ${doc.id}`);
-            console.log(`    > Data:`, doc.data());
-          });
-        }
-      }
-      console.log('--- END DIAGNOSTIC CHECK ---');
-      toast.info('Check console for diagnostic logs');
-    } catch (error) {
-      console.error('Diagnostic failed:', error);
-      toast.error('Diagnostic failed: ' + error.message);
-    }
-  };
 
 
   const updateStats = (productsList) => {
@@ -572,7 +518,42 @@ const VendorDashboard = () => {
     }
   };
 
+  const handleSaveTimings = async () => {
+    try {
+      setLoading(true);
+      await vendorService.update(vendorInfo.id, {
+        openingTime,
+        closingTime
+      });
+      toast.success('Store timings updated successfully!');
+    } catch (err) {
+      console.error('Error saving timings:', err);
+      toast.error('Failed to update timings');
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  /**
+   * Handles local file selection for product images
+   */
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Check file size (5MB limit)
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('File size exceeds 5MB limit');
+        return;
+      }
+
+      setNewProduct({
+        ...newProduct,
+        imageFile: file,
+        // Create a local preview URL
+        image: URL.createObjectURL(file)
+      });
+    }
+  };
 
   const handleAddProduct = async () => {
     try {
@@ -581,11 +562,26 @@ const VendorDashboard = () => {
       // Validate required fields
       if (!newProduct.name.trim() || !newProduct.price || newProduct.price <= 0) {
         toast.error('Product name and price are required');
+        setLoading(false);
         return;
       }
 
-      // Use image URL directly
-      const imageUrl = newProduct.image;
+      let imageUrl = newProduct.image;
+
+      // 1. Handle File Upload if a new file is selected
+      if (newProduct.imageFile) {
+        setUploading(true);
+        try {
+          const uploadResult = await uploadService.uploadImage(newProduct.imageFile);
+          imageUrl = uploadResult.url;
+        } catch (uploadError) {
+          toast.error('Failed to upload image. Please try again.');
+          setUploading(false);
+          setLoading(false);
+          return;
+        }
+        setUploading(false);
+      }
 
       // Determine Unit based on category
       let unit = 'piece';
@@ -593,151 +589,51 @@ const VendorDashboard = () => {
       if (vendorInfo.categoryName === 'Fruits & Vegetables' && newProduct.weightUnitFruits) unit = newProduct.weightUnitFruits;
       if (vendorInfo.categoryName === 'Meat & Fish' && newProduct.weightUnitMeat) unit = newProduct.weightUnitMeat;
 
-      // Prepare base product data
-      const productData = {
-        // Required Fields
-        productName: newProduct.name.trim(),
-        productDescription: newProduct.description.trim(),
-        price: parseFloat(newProduct.price),
-        productImage: imageUrl,
-        stockQuantity: parseInt(newProduct.quantity) || 1,
-        unit: unit,
-        status: newProduct.availability ? 'active' : 'inactive',
-
-        // Vendor Info
-        hotelId: vendorInfo.id,
-        storeName: vendorInfo.businessName,
-        applicationId: vendorInfo.applicationId,
-        categoryId: vendorInfo.categoryId,
-        categoryName: vendorInfo.categoryName,
-
-        // Common Fields
-        requiresPrescription: newProduct.prescriptionRequired || false,
-        isVeg: newProduct.isVeg,
-        availability: newProduct.availability,
-
-        // Timestamps
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        inStock: newProduct.inStock,
-      };
-
-      // Add category-specific fields
-      switch (vendorInfo.categoryName) {
-        case 'Food':
-          productData.spiceLevel = newProduct.spiceLevel;
-          productData.cuisine = newProduct.cuisine;
-          productData.ingredients = newProduct.ingredients;
-          productData.calories = newProduct.calories;
-          productData.preparationTime = newProduct.preparationTime;
-          productData.packagingType = newProduct.packagingType;
-          productData.bestseller = newProduct.bestseller;
-          break;
-
-        case 'Medicine':
-          productData.medicineType = newProduct.medicineType;
-          productData.expiryDate = newProduct.expiryDate;
-          productData.batchNumber = newProduct.batchNumber;
-          productData.prescriptionRequired = newProduct.prescriptionRequired;
-          productData.saltComposition = newProduct.saltComposition;
-          productData.dosageInstructions = newProduct.dosageInstructions;
-          productData.manufacturer = newProduct.manufacturer;
-          productData.storageConditions = newProduct.storageConditions;
-          productData.sideEffects = newProduct.sideEffects;
-
-          // Auto-disable if expired
-          if (newProduct.expiryDate) {
-            const expiryDate = new Date(newProduct.expiryDate);
-            const today = new Date();
-            if (expiryDate < today) {
-              productData.status = 'inactive';
-              productData.availability = false;
-            }
-          }
-          break;
-
-        case 'Groceries':
-          productData.groceryType = newProduct.groceryType;
-          productData.netWeight = newProduct.netWeight;
-          productData.weightUnit = newProduct.weightUnit;
-          productData.manufacturer = newProduct.manufacturerGrocery;
-          productData.storageInstructions = newProduct.storageInstructions;
-          productData.countryOfOrigin = newProduct.countryOfOrigin;
-          productData.organic = newProduct.organic;
-          break;
-
-        case 'Fruits & Vegetables':
-          productData.fruitVegetableType = newProduct.fruitVegetableType;
-          productData.weight = newProduct.weightFruits;
-          productData.weightUnit = newProduct.weightUnitFruits;
-          productData.organic = newProduct.organicFruit;
-          productData.freshnessDuration = newProduct.freshnessDuration;
-          productData.cutOption = newProduct.cutOption;
-          productData.seasonal = newProduct.seasonalFruit;
-          productData.storageInstructions = newProduct.storageInstructionsFruits;
-          break;
-
-        case 'Meat & Fish':
-          productData.meatFishType = newProduct.meatFishType;
-          productData.cutType = newProduct.cutType;
-          productData.weight = newProduct.weightMeat;
-          productData.weightUnit = newProduct.weightUnitMeat;
-          productData.freshFrozen = newProduct.freshFrozen;
-          productData.source = newProduct.source;
-          productData.packagingType = newProduct.packagingTypeMeat;
-          productData.deliverySlot = newProduct.deliverySlot;
-          productData.storageInstructions = newProduct.storageInstructionsMeat;
-          break;
-
-        case 'Dress & Gadgets':
-          productData.gender = newProduct.gender;
-          productData.size = newProduct.size;
-          productData.colorOptions = newProduct.colorOptions;
-          productData.fabricMaterial = newProduct.fabricMaterial;
-          productData.fitType = newProduct.fitType;
-          productData.occasion = newProduct.occasionDress;
-          productData.washCareInstructions = newProduct.washCareInstructions;
-          productData.countryOfManufacture = newProduct.countryOfManufacture;
-          break;
-      }
-
-      // Map UI state to MongoDB Product schema
+      // Prepare MongoDB Product payload
       const productPayload = {
-        name: newProduct.name,
-        description: newProduct.description,
+        name: newProduct.name.trim(),
+        description: newProduct.description.trim(),
         price: parseFloat(newProduct.price) || 0,
         stock: parseInt(newProduct.quantity) || 0,
         isInStock: newProduct.inStock,
         status: newProduct.availability ? 'active' : 'inactive',
         isAvailable: newProduct.availability,
-        thumbnail: imageUrl || newProduct.image,
-        images: imageUrl ? [imageUrl] : (newProduct.image ? [newProduct.image] : []),
-        vendor: vendorInfo.id, // MongoDB ObjectId
-        category: vendorInfo.categoryId, // MongoDB ObjectId
+        thumbnail: imageUrl,
+        images: imageUrl ? [imageUrl] : [],
+        vendor: vendorInfo.id,
+        category: vendorInfo.categoryId,
         isVeg: newProduct.isVeg,
         unit: unit || 'piece',
         
-        // Category-specific flattening (backend model has Map of String or specific fields)
+        // Category-specific details
+        categoryDetails: {
+          spiceLevel: newProduct.spiceLevel,
+          cuisine: newProduct.cuisine,
+          ingredients: newProduct.ingredients,
+          calories: newProduct.calories,
+          preparationTime: newProduct.preparationTime,
+          packagingType: newProduct.packagingType,
+          bestseller: newProduct.bestseller,
+          medicineType: newProduct.medicineType,
+          expiryDate: newProduct.expiryDate,
+          batchNumber: newProduct.batchNumber,
+          prescriptionRequired: newProduct.prescriptionRequired,
+          saltComposition: newProduct.saltComposition,
+          dosageInstructions: newProduct.dosageInstructions,
+          manufacturer: newProduct.manufacturer,
+          storageConditions: newProduct.storageConditions,
+          sideEffects: newProduct.sideEffects,
+          groceryType: newProduct.groceryType,
+          netWeight: newProduct.netWeight,
+          weightUnit: newProduct.weightUnit,
+          manufacturerGrocery: newProduct.manufacturerGrocery,
+          storageInstructions: newProduct.storageInstructions,
+          countryOfOrigin: newProduct.countryOfOrigin,
+          organic: newProduct.organic
+        },
         tags: [],
         nutritionInfo: {},
       };
-
-      // Add category-specific fields based on vendor category
-      if (vendorInfo.categoryName === 'Food') {
-        productPayload.tags.push(newProduct.cuisine);
-        productPayload.nutritionInfo = {
-          spiceLevel: newProduct.spiceLevel,
-          preparationTime: newProduct.preparationTime,
-          calories: newProduct.calories
-        };
-      } else if (vendorInfo.categoryName === 'Medicine') {
-        productPayload.tags.push(newProduct.medicineType);
-        productPayload.nutritionInfo = {
-          expiryDate: newProduct.expiryDate,
-          batchNumber: newProduct.batchNumber,
-          manufacturer: newProduct.manufacturer
-        };
-      }
 
       if (editingProduct) {
         await productService.update(editingProduct.id, productPayload);
@@ -751,10 +647,9 @@ const VendorDashboard = () => {
       setShowProductModal(false);
       setEditingProduct(null);
       resetProductForm();
-
     } catch (error) {
-      console.error('Error saving product:', error);
-      toast.error(`Failed to save product: ${error.displayMessage || error.message}`);
+      console.error('Error adding/updating product:', error);
+      toast.error('Failed to save product');
     } finally {
       setLoading(false);
     }
@@ -1086,7 +981,7 @@ const VendorDashboard = () => {
     try {
       if (!vendorInfo?.id) return;
 
-      await updateDoc(doc(db, 'hotels', vendorInfo.id), {
+      await vendorService.update(vendorInfo.id, {
         open: newStatus
       });
 
@@ -1095,32 +990,6 @@ const VendorDashboard = () => {
     } catch (error) {
       console.error('Error updating store status:', error);
       toast.error('Failed to update store status');
-    }
-  };
-
-  const handleSaveTimings = async (e) => {
-    e.preventDefault();
-    try {
-      if (!vendorInfo?.id) return;
-
-      const openingTime = e.target.openingTime.value;
-      const closingTime = e.target.closingTime.value;
-
-      await updateDoc(doc(db, 'hotels', vendorInfo.id), {
-        openingTime,
-        closingTime
-      });
-
-      setVendorInfo(prev => ({
-        ...prev,
-        openingTime,
-        closingTime
-      }));
-
-      toast.success('Store timings updated successfully');
-    } catch (error) {
-      console.error('Error updating timings:', error);
-      toast.error('Failed to update timings');
     }
   };
 
@@ -1733,28 +1602,43 @@ const VendorDashboard = () => {
               {/* Product Image */}
               <div className="space-y-4">
                 <h3 className="font-semibold text-gray-700 text-sm border-b pb-2">Product Image</h3>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Image URL
-                  </label>
-                  <input
-                    type="url"
-                    value={newProduct.image}
-                    onChange={(e) => setNewProduct({ ...newProduct, image: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    placeholder="https://example.com/product-image.jpg"
-                  />
-                  {newProduct.image && (
-                    <div className="mt-4 relative w-32 h-32 rounded-lg overflow-hidden border border-gray-200">
+                <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-6 hover:border-yellow-500 transition-colors">
+                  {newProduct.image ? (
+                    <div className="relative w-full max-w-[200px] aspect-square rounded-lg overflow-hidden group">
                       <img
-                        src={newProduct.image}
+                        src={uploadService.getFullUrl(newProduct.image)}
                         alt="Preview"
                         className="w-full h-full object-cover"
-                        onError={(e) => { e.target.style.display = 'none' }}
                       />
+                      <button
+                        onClick={() => setNewProduct({ ...newProduct, image: '', imageFile: null })}
+                        className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
+                  ) : (
+                    <label className="flex flex-col items-center cursor-pointer w-full">
+                      <div className="p-3 bg-yellow-50 rounded-full mb-3">
+                        <Upload className="w-6 h-6 text-yellow-600" />
+                      </div>
+                      <span className="text-sm font-medium text-gray-700">Click to upload product image</span>
+                      <span className="text-xs text-gray-500 mt-1">PNG, JPG or WEBP up to 5MB</span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                      />
+                    </label>
                   )}
                 </div>
+                {uploading && (
+                  <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+                    <div className="bg-yellow-500 h-1.5 rounded-full animate-pulse" style={{ width: '100%' }}></div>
+                    <p className="text-[10px] text-gray-500 mt-1 animate-pulse">Uploading to server...</p>
+                  </div>
+                )}
               </div>
 
               {/* Category Specific Fields */}
