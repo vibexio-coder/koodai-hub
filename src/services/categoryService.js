@@ -12,7 +12,8 @@ const categoryService = {
   getAll: async () => {
     try {
       const response = await apiClient.get('/categories');
-      return response.data?.categories || response.data || [];
+      // Backend returns { success: true, data: [...] }
+      return response.data?.data || response.data?.categories || response.data || [];
     } catch (error) {
       console.error('[categoryService] getAll failed:', error.displayMessage || error.message);
       return []; // Safe fallback
@@ -27,7 +28,8 @@ const categoryService = {
   create: async (data) => {
     try {
       const response = await apiClient.post('/categories', data);
-      return response.data?.category || response.data || null;
+      // Backend returns { success: true, data: {...} }
+      return response.data?.data || response.data?.category || response.data || null;
     } catch (error) {
       console.error('[categoryService] create failed:', error.displayMessage || error.message);
       throw error; // Rethrow to let components show specific error toasts

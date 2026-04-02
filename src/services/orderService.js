@@ -13,7 +13,8 @@ const orderService = {
   getAll: async (filters = {}) => {
     try {
       const response = await apiClient.get('/orders', { params: filters });
-      return response.data?.orders || response.data || [];
+      // Backend returns { success: true, data: [...] }
+      return response.data?.data || response.data?.orders || response.data || [];
     } catch (error) {
       console.error('[orderService] getAll failed:', error.displayMessage || error.message);
       return [];
@@ -28,7 +29,8 @@ const orderService = {
   getById: async (id) => {
     try {
       const response = await apiClient.get(`/orders/${id}`);
-      return response.data?.order || response.data || null;
+      // Backend returns { success: true, data: {...} }
+      return response.data?.data || response.data?.order || response.data || null;
     } catch (error) {
       console.error('[orderService] getById failed:', error.displayMessage || error.message);
       return null;

@@ -1,5 +1,5 @@
 /* eslint-disable no-unused-vars */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Package,
   Plus,
@@ -44,6 +44,7 @@ import { useNavigate } from 'react-router-dom';
 import vendorService from '../../services/vendorService';
 import productService from '../../services/productService';
 import uploadService from '../../services/uploadService';
+import orderService from '../../services/orderService';
 
 const VendorDashboard = () => {
   const navigate = useNavigate();
@@ -241,8 +242,8 @@ const VendorDashboard = () => {
           id: vendorData._id || vendorData.id,
           businessName: vendorData.businessName,
           businessId: vendorData._id || vendorData.id,
-          categoryId: vendorData.categoryId || (vendorData.categories?.[0]?._id) || vendorData.categories?.[0] || '',
-          categoryName: vendorData.categoryName || (vendorData.categories?.[0]?.name) || '',
+          categoryId: vendorData.categoryId || (vendorData.categories && (vendorData.categories[0]?._id || vendorData.categories[0])) || '',
+          categoryName: vendorData.categoryName || (vendorData.categories?.[0]?.name) || 'Food', // Food as default fallback for name
           applicationId: vendorData.applicationId,
           email: vendorData.email,
           phone: vendorData.phone,

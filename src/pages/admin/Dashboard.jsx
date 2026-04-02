@@ -155,10 +155,10 @@ const Dashboard = () => {
       setVendorsLoading(true);
       const data = await vendorService.getAll();
       
-      // Map MongoDB to UI expected structure using the service helper
-      const mappedData = (Array.isArray(data) ? data : data?.vendors || [])
-        .map(v => mapVendorToUI(v));
-
+      // Ensure we extract the array correctly even if it's wrapped
+      const vendorList = Array.isArray(data) ? data : (data?.vendors || data?.data || []);
+      const mappedData = vendorList.map(v => mapVendorToUI(v));
+      
       setAllVendors(mappedData);
     } catch (e) {
       console.error('Error fetching vendors:', e);
@@ -206,7 +206,8 @@ const Dashboard = () => {
   const fetchRecentOrders = async () => {
     try {
       const res = await orderService.getAll({ limit: 5 });
-      const ordersArray = Array.isArray(res.data) ? res.data : (res.data?.orders || []);
+      // res is now the array from orderService.getAll()
+      const ordersArray = Array.isArray(res) ? res : (res?.orders || res?.data || []);
       
       const mappedOrders = ordersArray.map(o => ({
         id: o._id || o.id,

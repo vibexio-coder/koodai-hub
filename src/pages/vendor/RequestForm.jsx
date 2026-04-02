@@ -6,8 +6,19 @@ import 'react-toastify/dist/ReactToastify.css';
 
 import categoryService from '../../services/categoryService';
 import vendorService from '../../services/vendorService';
+import useAuth from '../../hooks/useAuth';
+
+const DEFAULT_CATEGORIES = [
+  { id: '65f0a1c2d3e4f5a6b7c8d9e0', name: 'Food', status: 'active', slug: 'food' },
+  { id: '65f0a1c2d3e4f5a6b7c8d9e1', name: 'Medicine', status: 'active', slug: 'medicine' },
+  { id: '65f0a1c2d3e4f5a6b7c8d9e2', name: 'Groceries', status: 'active', slug: 'groceries' },
+  { id: '65f0a1c2d3e4f5a6b7c8d9e3', name: 'Fruits & Vegetables', status: 'active', slug: 'fruits-vegetables' },
+  { id: '65f0a1c2d3e4f5a6b7c8d9e4', name: 'Meat & Fish', status: 'active', slug: 'meat-fish' },
+  { id: '65f0a1c2d3e4f5a6b7c8d9e5', name: 'Dress & Gadgets', status: 'active', slug: 'dress-gadgets' }
+];
 
 const RequestForm = () => {
+  const { user } = useAuth();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -120,18 +131,30 @@ const RequestForm = () => {
         const data = await categoryService.getAll();
         
         // Normalize categories for the form (id mapping)
-        // Supportive of both { data: [...] } and direct array responses
         const categoriesData = (Array.isArray(data) ? data : data?.categories || []).map(cat => ({
           id: cat._id || cat.id,
           ...cat
         }));
 
-        setCategories(categoriesData);
+        // Merge with defaults to ensure we always have the core categories
+        // or use defaults if API returned nothing
+        if (categoriesData.length === 0) {
+          setCategories(DEFAULT_CATEGORIES);
+        } else {
+          // Add defaults that might be missing in API
+          const merged = [...categoriesData];
+          DEFAULT_CATEGORIES.forEach(def => {
+            if (!merged.some(c => c.name === def.name)) {
+              merged.push(def);
+            }
+          });
+          setCategories(merged);
+        }
       } catch (error) {
         console.error('Error fetching categories:', error);
-        toast.error('Failed to load categories. Please refresh the page.');
-        // Fallback to empty to prevent crash
-        setCategories([]);
+        toast.error('Failed to load live categories. Using default options.');
+        // Fallback to defaults to prevent empty dropdown
+        setCategories(DEFAULT_CATEGORIES);
       } finally {
         setLoading(false);
       }
@@ -405,9 +428,9 @@ const RequestForm = () => {
         ...prev,
         [name]: value,
         // Reset business specific fields when category changes
-        cuisine: 'South Indian',
-        priceRange: '₹₹',
-        medicineType: 'Pharmacy',
+        cuisine: categoryName === 'Food' ? 'South Indian' : '',
+        priceRange: categoryName === 'Food' ? '₹₹' : '',
+        medicineType: categoryName === 'Medicine' ? 'Pharmacy' : '',
         groceryType: 'Supermarket',
         fruitsType: 'Fruits Store',
         meatType: 'Meat Shop',
@@ -1210,6 +1233,11 @@ const RequestForm = () => {
     e.preventDefault();
 
     // Final validation
+    if (!user) {
+      toast.error('You must be logged in to submit an application');
+      return;
+    }
+
     if (!validateSection1() || !validateSection2() || !validateSection3() || !validateSection4()) {
       toast.error('Please fix all errors before submitting');
       return;
@@ -1317,7 +1345,21 @@ const RequestForm = () => {
         // Business Type
         businessType: categoryName === 'Food' ? 'restaurant' : 'store',
 
-        // Category-specific data (for filters)
+        // New Backend Structure (Matching models/Vendor.js)
+        user: user?.id || user?._id || '', // REQUIRED by backend
+        businessName: formData.businessName.trim(), // REQUIRED by backend
+        logo: imageBase64 || formData.storeImageUrl || '',
+        categories: [categoryId], // Backend expects array of ObjectIds
+        type: categoryName === 'Food' ? 'restaurant' : 
+              categoryName === 'Medicine' ? 'pharmacy' : 
+              categoryName === 'Groceries' ? 'grocery' : 'other',
+        
+        // Detailed Address Structure
+        address: {
+          street: formData.storeAddress.trim(),
+          city: formData.operatingCity.trim(),
+          country: 'India'
+        },
         ...(categoryName === 'Food' && {
           cuisine: formData.cuisine,
           priceRange: formData.priceRange,
@@ -1368,8 +1410,9 @@ const RequestForm = () => {
         totalEarnings: 0,
 
         // Timestamps
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        // Timestamps (Mongoose handles these, but providing as Date for consistency)
+        createdAt: new Date(),
+        updatedAt: new Date(),
 
         // Additional fields
         website: formData.website || '',

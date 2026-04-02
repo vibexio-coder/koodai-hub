@@ -40,7 +40,8 @@ const vendorService = {
   getAll: async (filters = {}) => {
     try {
       const response = await apiClient.get('/vendors', { params: filters });
-      return response.data?.vendors || response.data || [];
+      // Backend returns { success: true, data: [...] }
+      return response.data?.data || response.data?.vendors || response.data || [];
     } catch (error) {
       console.error('[vendorService] getAll failed:', error.displayMessage || error.message);
       return [];
@@ -55,7 +56,8 @@ const vendorService = {
   getById: async (id) => {
     try {
       const response = await apiClient.get(`/vendors/${id}`);
-      return response.data?.vendor || response.data || null;
+      // Backend returns { success: true, data: {...} }
+      return response.data?.data || response.data?.vendor || response.data || null;
     } catch (error) {
       console.error('[vendorService] getById failed:', error.displayMessage || error.message);
       return null;
@@ -70,7 +72,8 @@ const vendorService = {
   create: async (data) => {
     try {
       const response = await apiClient.post('/vendors', data);
-      return response.data?.vendor || response.data || null;
+      // Backend returns { success: true, data: {...} }
+      return response.data?.data || response.data?.vendor || response.data || null;
     } catch (error) {
       console.error('[vendorService] create failed:', error.displayMessage || error.message);
       throw error;
@@ -116,7 +119,8 @@ const vendorService = {
    */
   approve: async (id) => {
     try {
-      await apiClient.post(`/vendors/${id}/approve`);
+      // Backend uses PATCH /vendors/:id/status
+      await apiClient.patch(`/vendors/${id}/status`, { status: 'approved' });
       return true;
     } catch (error) {
       console.error('[vendorService] approve failed:', error.displayMessage || error.message);
@@ -132,7 +136,8 @@ const vendorService = {
    */
   reject: async (id, reason) => {
     try {
-      await apiClient.post(`/vendors/${id}/reject`, { reason });
+      // Backend uses PATCH /vendors/:id/status
+      await apiClient.patch(`/vendors/${id}/status`, { status: 'rejected', rejectionReason: reason });
       return true;
     } catch (error) {
       console.error('[vendorService] reject failed:', error.displayMessage || error.message);
